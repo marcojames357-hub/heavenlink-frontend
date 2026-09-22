@@ -33,6 +33,11 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# Haven Link Node.js backend
+/heavenlink-backend/node_modules/
+/heavenlink-backend/data/
+/heavenlink-backend/.env
+
 # Symbolication related
 app.*.symbols
 

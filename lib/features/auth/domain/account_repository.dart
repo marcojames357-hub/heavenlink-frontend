@@ -24,74 +24,7 @@ abstract interface class AccountRepository {
 /// restart and no password material is stored.
 class LocalAccountRepository implements AccountRepository {
   LocalAccountRepository({List<User>? seed})
-    : _accounts = List.of(seed ?? kSeedAccounts);
-
-  /// The demo agent accounts that own the seeded listings.
-  static const String rentalAgentId = 'agent-rental-1';
-  static const String stayAgentId = 'agent-stay-1';
-  static const String unverifiedAgentId = 'agent-rental-2';
-
-  static const List<User> kSeedAccounts = [
-    User(
-      id: 'customer-1',
-      fullName: 'Aisha Mohamed',
-      email: 'aisha@example.com',
-      phone: '+255754111222',
-      role: AccountRole.customer,
-      verification: AccountVerification.verified,
-      isPreviewSession: true,
-    ),
-    User(
-      id: rentalAgentId,
-      fullName: 'Juma Kweka',
-      email: 'rentals@havenlink.co.tz',
-      phone: '+255713000222',
-      role: AccountRole.rentalAgent,
-      verification: AccountVerification.verified,
-      capabilities: {AgentCapability.rentalProperty},
-      isPreviewSession: true,
-    ),
-    User(
-      id: stayAgentId,
-      fullName: 'Neema Mushi',
-      email: 'stays@havenlink.co.tz',
-      phone: '+255754333444',
-      role: AccountRole.stayAgent,
-      verification: AccountVerification.verified,
-      capabilities: {AgentCapability.accommodationBooking},
-      isPreviewSession: true,
-    ),
-    User(
-      id: unverifiedAgentId,
-      fullName: 'Said Juma',
-      email: 'newagent@havenlink.co.tz',
-      phone: '+255764555666',
-      role: AccountRole.rentalAgent,
-      verification: AccountVerification.unverified,
-      capabilities: {AgentCapability.rentalProperty},
-      isPreviewSession: true,
-    ),
-    User(
-      id: 'admin-1',
-      fullName: 'Haven Link Admin',
-      email: 'admin@havenlink.co.tz',
-      phone: '+255700000001',
-      role: AccountRole.admin,
-      verification: AccountVerification.verified,
-      isPreviewSession: true,
-    ),
-    User(
-      id: 'agent-disabled-1',
-      fullName: 'Fraudulent Agent',
-      email: 'suspended@havenlink.co.tz',
-      phone: '+255700000002',
-      role: AccountRole.rentalAgent,
-      verification: AccountVerification.verified,
-      capabilities: {AgentCapability.rentalProperty},
-      accountEnabled: false,
-      isPreviewSession: true,
-    ),
-  ];
+    : _accounts = List.of(seed ?? const []);
 
   final List<User> _accounts;
 

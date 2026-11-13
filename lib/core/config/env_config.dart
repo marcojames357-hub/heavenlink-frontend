@@ -22,6 +22,12 @@ class EnvConfig {
   /// Base URL of the Haven Link backend. Empty means "not configured".
   static const String apiBaseUrl = String.fromEnvironment('HAVEN_API_BASE_URL');
 
+  /// Explicitly labelled isolated local demo build; never a production default.
+  static const bool demoMode = bool.fromEnvironment(
+    'HAVEN_DEMO_MODE',
+    defaultValue: false,
+  );
+
   /// True when a backend has been supplied at build time.
   static bool get backendConfigured => apiBaseUrl.isNotEmpty;
 

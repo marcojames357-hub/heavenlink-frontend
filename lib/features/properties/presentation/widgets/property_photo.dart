@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:haven_link/core/theme/haven_icons.dart';
 
 import '../../../../core/theme/app_theme.dart';
 
@@ -24,7 +25,7 @@ class PropertyPhoto extends StatelessWidget {
         color: HavenTheme.forest.withValues(alpha: 0.08),
         alignment: Alignment.center,
         child: const Icon(
-          Icons.home_work_outlined,
+          HavenIcons.homeWorkOutlined,
           size: 42,
           color: HavenTheme.forest,
         ),

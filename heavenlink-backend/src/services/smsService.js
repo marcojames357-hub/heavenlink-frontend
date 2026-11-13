@@ -39,6 +39,13 @@ class SmsService {
     }
   }
 
+  async sendMessage(phone, message) {
+    if (!this.isConfigured()) throw new Error('SMS provider is not configured');
+    return this.provider === 'twilio'
+      ? this.sendTwilioSms(phone, message)
+      : this.sendAfricaTalkingSms(phone, message);
+  }
+
   async sendTwilioSms(phone, message) {
     try {
       const result = await this.twilioClient.messages.create({

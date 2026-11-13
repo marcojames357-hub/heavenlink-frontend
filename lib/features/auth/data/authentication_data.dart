@@ -49,6 +49,7 @@ class HttpAuthenticationRepository implements AuthenticationRepository {
     required String sessionId,
     required AccountRole role,
     Set<AgentCapability> capabilities = const {},
+    Set<AgentWorkspace> workspaces = const {},
   }) async {
     final body = await _post('/api/v1/auth/register', {
       'fullName': fullName,
@@ -59,13 +60,10 @@ class HttpAuthenticationRepository implements AuthenticationRepository {
       'sessionId': sessionId,
       'role': role.identifier,
       'capabilities': capabilities.map((item) => item.name).toList(),
+      if (workspaces.isNotEmpty)
+        'workspaces': workspaces.map((item) => item.identifier).toList(),
     });
     return _userFrom(body);
-  }
-
-  @override
-  Future<void> sendPasswordReset(String email) async {
-    await _post('/v1/auth/password-reset', {'email': email});
   }
 
   Future<Map<String, dynamic>> _post(
@@ -122,11 +120,34 @@ class HttpAuthenticationRepository implements AuthenticationRepository {
       capabilities: (userJson['capabilities'] as List<dynamic>? ?? const [])
           .whereType<String>()
           .map(
-            (value) =>
-                AgentCapability.values.firstWhere((item) => item.name == value),
+            (value) => AgentCapability.values
+                .where((item) => item.name == value)
+                .firstOrNull,
           )
+          .whereType<AgentCapability>()
           .toSet(),
+      workspaces: _workspacesFrom(userJson['workspaces']),
     );
+  }
+
+  /// Accepts `["HOTEL"]` or `[{"workspace":"HOTEL","status":"active"}]` and
+  /// keeps only active workspaces.
+  Set<AgentWorkspace> _workspacesFrom(Object? raw) {
+    if (raw is! List) return const {};
+    final result = <AgentWorkspace>{};
+    for (final item in raw) {
+      final String? name;
+      if (item is String) {
+        name = item;
+      } else if (item is Map && (item['status'] ?? 'active') == 'active') {
+        name = (item['workspace'] ?? item['type']) as String?;
+      } else {
+        name = null;
+      }
+      final parsed = name == null ? null : AgentWorkspace.fromIdentifier(name);
+      if (parsed != null) result.add(parsed);
+    }
+    return result;
   }
 }
 
@@ -182,6 +203,7 @@ class DevelopmentAuthenticationRepository implements AuthenticationRepository {
     required String sessionId,
     required AccountRole role,
     Set<AgentCapability> capabilities = const {},
+    Set<AgentWorkspace> workspaces = const {},
   }) async {
     final account = User(
       id: 'user-${DateTime.now().microsecondsSinceEpoch}',
@@ -191,16 +213,10 @@ class DevelopmentAuthenticationRepository implements AuthenticationRepository {
       role: role,
       verification: AccountVerification.verified,
       capabilities: capabilities,
+      workspaces: workspaces,
       isPreviewSession: true,
     );
     return _accounts.create(account);
-  }
-
-  @override
-  Future<void> sendPasswordReset(String email) async {
-    throw StateError(
-      'Password recovery needs the Haven Link backend. It is not connected yet.',
-    );
   }
 }
 
@@ -250,8 +266,6 @@ class UnconfiguredAuthenticationRepository implements AuthenticationRepository {
     required String sessionId,
     required AccountRole role,
     Set<AgentCapability> capabilities = const {},
+    Set<AgentWorkspace> workspaces = const {},
   }) async => throw _unavailable();
-
-  @override
-  Future<void> sendPasswordReset(String email) async => throw _unavailable();
 }

@@ -21,10 +21,10 @@ const errorHandler = (err, req, res, next) => {
   // Sequelize unique constraint errors
   if (err.name === 'SequelizeUniqueConstraintError') {
     const field = err.errors[0]?.path;
-    return res.status(409).json({
-      error: 'Duplicate entry',
+    return res.status(409).json({ 
+      error: 'Duplicate entry', 
       field,
-      message: `${field} already exists`
+      message: `${field} already exists` 
     });
   }
 
@@ -37,7 +37,7 @@ const errorHandler = (err, req, res, next) => {
   const statusCode = err.statusCode || 500;
   const message = err.message || 'Internal server error';
 
-  res.status(statusCode).json({
+  res.status(statusCode).json({ 
     error: message,
     ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
   });

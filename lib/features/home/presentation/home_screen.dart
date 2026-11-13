@@ -1,21 +1,34 @@
 import 'package:flutter/material.dart';
+import 'package:haven_link/core/theme/haven_icons.dart';
 
+import '../../../core/localization/app_strings.dart';
 import '../../../core/state/haven_link_store.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../features/properties/domain/property.dart';
-import '../../../features/properties/presentation/widgets/property_card.dart';
+import 'home_sections.dart';
+import '../../../features/properties/presentation/widgets/property_photo.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({
     required this.store,
     required this.onBrowse,
     required this.onOpenProperty,
+    this.onSearch,
+    this.onAccount,
+    this.onSearchWithDates,
+    this.scrollController,
+    this.sectionKeys = const {},
     super.key,
   });
 
   final HavenLinkStore store;
   final ValueChanged<PropertyBusinessModel> onBrowse;
   final ValueChanged<Property> onOpenProperty;
+  final HomeSearchCallback? onSearch;
+  final VoidCallback? onAccount;
+  final HomeDateSearchCallback? onSearchWithDates;
+  final ScrollController? scrollController;
+  final Map<String, GlobalKey> sectionKeys;
 
   @override
   Widget build(BuildContext context) {
@@ -27,513 +40,387 @@ class HomeScreen extends StatelessWidget {
     }
 
     final properties = store.properties;
-    final stays = properties
-        .where(
-          (property) =>
-              property.businessModel == PropertyBusinessModel.bookable,
-        )
-        .toList();
-    final rentals = properties
-        .where(
-          (property) =>
-              property.businessModel == PropertyBusinessModel.contactUnlock,
-        )
-        .toList();
-    final verified = properties
-        .where((property) => property.isVerified)
-        .take(3)
-        .toList();
-
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 36),
-      children: [
-        _HeroPanel(onSearch: () => onBrowse(PropertyBusinessModel.bookable)),
-        const SizedBox(height: 30),
-        Text(
-          'Find your kind of stay',
-          style: Theme.of(context).textTheme.headlineMedium,
-        ),
-        const SizedBox(height: 6),
-        Text(
-          'Two clear ways to find your next place in Tanzania.',
-          style: Theme.of(
-            context,
-          ).textTheme.bodyMedium?.copyWith(color: HavenTheme.muted),
-        ),
-        const SizedBox(height: 18),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final wide = constraints.maxWidth > 700;
-            final tiles = [
-              _SectionTile(
-                imageUrl: stays.first.imageUrl,
-                icon: Icons.hotel_outlined,
-                title: 'Hotels, lodges & apartments',
-                subtitle: 'Book directly with Haven Link',
-                actionLabel: 'Explore stays',
-                onTap: () => onBrowse(PropertyBusinessModel.bookable),
+    final featured =
+        properties.where((p) => p.isVerified).firstOrNull ??
+        properties.firstOrNull;
+    return SingleChildScrollView(
+      key: const Key('home-scroll'),
+      controller: scrollController,
+      padding: EdgeInsets.zero,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _HomeBand(
+            color: const Color(0xFFE8F6F0),
+            child: _HeroPanel(
+              featured: featured,
+              onSearch: () => onBrowse(PropertyBusinessModel.bookable),
+              onExploreRentals: () =>
+                  onBrowse(PropertyBusinessModel.contactUnlock),
+              onOpenFeatured: featured == null
+                  ? null
+                  : () => onOpenProperty(featured),
+              search: HomeSearchPanel(
+                onSearchWithDates: onSearchWithDates,
+                onSearch:
+                    onSearch ?? (model, query, category) => onBrowse(model),
               ),
-              _SectionTile(
-                imageUrl: rentals.first.imageUrl,
-                icon: Icons.key_outlined,
-                title: 'Houses & rooms for rent',
-                subtitle: 'Find your space and connect with the property owner',
-                actionLabel: 'Explore rentals',
-                onTap: () => onBrowse(PropertyBusinessModel.contactUnlock),
-              ),
-            ];
-            if (wide) {
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(child: tiles[0]),
-                  const SizedBox(width: 16),
-                  Expanded(child: tiles[1]),
-                ],
-              );
-            }
-            return Column(
-              children: [
-                _CompactSectionTile(
-                  imageUrl: stays.first.imageUrl,
-                  icon: Icons.hotel_outlined,
-                  title: 'Hotels, lodges & apartments',
-                  subtitle: 'Book directly with Haven Link',
-                  actionLabel: 'Explore stays',
-                  onTap: () => onBrowse(PropertyBusinessModel.bookable),
-                ),
-                const SizedBox(height: 10),
-                _CompactSectionTile(
-                  imageUrl: rentals.first.imageUrl,
-                  icon: Icons.key_outlined,
-                  title: 'Houses & rooms for rent',
-                  subtitle:
-                      'Find your space and connect with the property owner',
-                  actionLabel: 'Explore rentals',
-                  onTap: () => onBrowse(PropertyBusinessModel.contactUnlock),
-                ),
-              ],
-            );
-          },
-        ),
-        const SizedBox(height: 34),
-        _SectionHeading(
-          title: 'Popular locations',
-          subtitle: 'Start with a place you know',
-        ),
-        const SizedBox(height: 14),
-        Wrap(
-          spacing: 9,
-          runSpacing: 9,
-          children:
-              [
-                    'Mikocheni',
-                    'Masaki',
-                    'Mbezi Beach',
-                    'Kinondoni',
-                    'Sinza',
-                    'Arusha',
-                    'Zanzibar',
-                  ]
-                  .map(
-                    (place) => ActionChip(
-                      avatar: const Icon(Icons.location_on_outlined, size: 16),
-                      label: Text(place),
-                      onPressed: () =>
-                          onBrowse(PropertyBusinessModel.contactUnlock),
-                    ),
-                  )
-                  .toList(),
-        ),
-        const SizedBox(height: 36),
-        _SectionHeading(
-          title: 'Stays people love',
-          subtitle: 'Bookable properties with verified details',
-          action: TextButton.icon(
-            onPressed: () => onBrowse(PropertyBusinessModel.bookable),
-            icon: const Icon(Icons.arrow_forward, size: 17),
-            label: const Text('See stays'),
+            ),
           ),
-        ),
-        const SizedBox(height: 14),
-        _PropertyGrid(
-          properties: stays.take(2).toList(),
-          store: store,
-          onOpenProperty: onOpenProperty,
-        ),
-        const SizedBox(height: 34),
-        _SectionHeading(
-          title: 'Verified properties',
-          subtitle: 'Listings with current verification status',
-        ),
-        const SizedBox(height: 14),
-        _PropertyGrid(
-          properties: verified,
-          store: store,
-          onOpenProperty: onOpenProperty,
-        ),
-        const SizedBox(height: 34),
-        _SectionHeading(
-          title: 'Recently added rentals',
-          subtitle: 'Your next home could be closer than you think',
-          action: TextButton.icon(
-            onPressed: () => onBrowse(PropertyBusinessModel.contactUnlock),
-            icon: const Icon(Icons.arrow_forward, size: 17),
-            label: const Text('See rentals'),
+          _HomeBand(
+            key: sectionKeys['discover'],
+            child: HomeDiscoverySection(
+              store: store,
+              onOpenProperty: onOpenProperty,
+              onSearch: onSearch ?? (model, query, category) => onBrowse(model),
+            ),
           ),
-        ),
-        const SizedBox(height: 14),
-        _PropertyGrid(
-          properties: rentals.take(2).toList(),
-          store: store,
-          onOpenProperty: onOpenProperty,
-        ),
-        const SizedBox(height: 28),
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: const Color(0xFFE9E4D8),
-            borderRadius: BorderRadius.circular(12),
+          _HomeBand(
+            key: sectionKeys['how'],
+            color: HavenTheme.darkTeal,
+            child: HomeTrustSection(onBrowse: onBrowse),
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Icon(Icons.shield_outlined, color: HavenTheme.forest),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Your next move, with more confidence',
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    const SizedBox(height: 5),
-                    const Text(
-                      'Verification labels reflect the status supplied by Haven Link. Rental contacts stay private until an authorized unlock is recorded.',
-                    ),
-                  ],
-                ),
-              ),
-            ],
+          _HomeBand(
+            key: sectionKeys['portals'],
+            child: HomeWorkspaceSection(onAccount: onAccount),
           ),
-        ),
-      ],
+          const _HomeBand(color: HavenTheme.white, child: HomeFooter()),
+        ],
+      ),
     );
   }
 }
 
 class _HeroPanel extends StatelessWidget {
-  const _HeroPanel({required this.onSearch});
+  const _HeroPanel({
+    required this.featured,
+    required this.onSearch,
+    required this.onExploreRentals,
+    required this.onOpenFeatured,
+    required this.search,
+  });
 
+  final Property? featured;
   final VoidCallback onSearch;
+  final VoidCallback onExploreRentals;
+  final VoidCallback? onOpenFeatured;
+  final Widget search;
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final compact = constraints.maxWidth < 600;
+        final compact = constraints.maxWidth < 1024;
+        final copy = _HeroCopy(
+          compact: compact,
+          headingSize: constraints.maxWidth < 640
+              ? 42
+              : compact
+              ? 58
+              : 68,
+          onSearch: onSearch,
+          onExploreRentals: onExploreRentals,
+          search: search,
+        );
+        final propertyCard = _FeaturedPropertyCard(
+          property: featured,
+          onTap: onOpenFeatured,
+          compact: compact,
+        );
         return Container(
-          height: compact ? 250 : 320,
-          clipBehavior: Clip.antiAlias,
+          padding: EdgeInsets.symmetric(
+            horizontal: compact ? 20 : 32,
+            vertical: compact ? 56 : 80,
+          ),
           decoration: BoxDecoration(
-            color: HavenTheme.ink,
-            borderRadius: BorderRadius.circular(14),
+            color: const Color(0xFFE8F6F0),
+            gradient: RadialGradient(
+              center: const Alignment(1.1, -1.2),
+              radius: 1.3,
+              colors: [
+                HavenTheme.mintAccent.withValues(alpha: .2),
+                const Color(0xFFE8F6F0),
+              ],
+            ),
           ),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              Image.network(
-                'https://images.unsplash.com/photo-1600210492486-724fe5c67fb0?w=1600&auto=format&fit=crop',
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) =>
-                    const SizedBox.shrink(),
-              ),
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      HavenTheme.ink.withValues(alpha: 0.92),
-                      Colors.transparent,
-                    ],
-                    begin: Alignment.centerLeft,
-                    end: Alignment.centerRight,
-                  ),
+          child: compact
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [copy, const SizedBox(height: 18), propertyCard],
+                )
+              : Row(
+                  children: [
+                    Expanded(flex: 21, child: copy),
+                    const SizedBox(width: 40),
+                    Expanded(flex: 19, child: propertyCard),
+                  ],
                 ),
-              ),
-              Padding(
-                padding: EdgeInsets.all(compact ? 16 : 24),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 520),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Text(
-                        'HAVEN LINK  /  TANZANIA',
-                        style: TextStyle(
-                          color: HavenTheme.gold,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 1.1,
-                        ),
-                      ),
-                      SizedBox(height: compact ? 7 : 12),
-                      Text(
-                        'Find Your Perfect Space with Confidence.',
-                        style: Theme.of(context).textTheme.headlineLarge
-                            ?.copyWith(
-                              color: Colors.white,
-                              fontSize: compact ? 25 : 32,
-                            ),
-                      ),
-                      SizedBox(height: compact ? 6 : 10),
-                      const Text(
-                        'Discover verified places to stay and homes to rent across Tanzania.',
-                        style: TextStyle(color: Colors.white70, height: 1.5),
-                      ),
-                      SizedBox(height: compact ? 10 : 19),
-                      FilledButton.icon(
-                        onPressed: onSearch,
-                        icon: const Icon(Icons.search),
-                        label: const Text('Search properties'),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: HavenTheme.gold,
-                          foregroundColor: HavenTheme.ink,
-                          padding: EdgeInsets.symmetric(
-                            horizontal: compact ? 14 : 20,
-                            vertical: compact ? 10 : 15,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
         );
       },
     );
   }
 }
 
-class _CompactSectionTile extends StatelessWidget {
-  const _CompactSectionTile({
-    required this.imageUrl,
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.actionLabel,
-    required this.onTap,
+class _HeroCopy extends StatelessWidget {
+  const _HeroCopy({
+    required this.headingSize,
+    required this.compact,
+    required this.onSearch,
+    required this.onExploreRentals,
+    required this.search,
   });
 
-  final String imageUrl;
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final String actionLabel;
-  final VoidCallback onTap;
+  final Widget search;
+  final double headingSize;
+  final bool compact;
+  final VoidCallback onSearch;
+  final VoidCallback onExploreRentals;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(10),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: HavenTheme.white,
+            border: Border.all(
+              color: HavenTheme.forest.withValues(alpha: 0.18),
+            ),
+            borderRadius: BorderRadius.circular(30),
+          ),
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(7),
-                child: SizedBox.square(
-                  dimension: 66,
-                  child: Image.network(
-                    imageUrl,
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) =>
-                        const ColoredBox(color: Color(0xFFE5E9DE)),
+              const Icon(
+                HavenIcons.verifiedUserOutlined,
+                color: HavenTheme.forest,
+                size: 16,
+              ),
+              const SizedBox(width: 7),
+              Flexible(
+                child: Text(
+                  context.tr('Tanzania property network'),
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: HavenTheme.forest,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
-              ),
-              const SizedBox(width: 11),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(icon, size: 16, color: HavenTheme.forest),
-                        const SizedBox(width: 5),
-                        Expanded(
-                          child: Text(
-                            title,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      subtitle,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(
-                        context,
-                      ).textTheme.bodySmall?.copyWith(color: HavenTheme.muted),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 4),
-              IconButton(
-                tooltip: actionLabel,
-                onPressed: onTap,
-                icon: const Icon(Icons.arrow_forward, color: HavenTheme.forest),
               ),
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _SectionTile extends StatelessWidget {
-  const _SectionTile({
-    required this.imageUrl,
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.actionLabel,
-    required this.onTap,
-  });
-
-  final String imageUrl;
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final String actionLabel;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        const SizedBox(height: 18),
+        Text.rich(
+          TextSpan(
+            children: context.languageCode == 'en'
+                ? [
+                    const TextSpan(text: 'Find Your Perfect Space '),
+                    const TextSpan(
+                      text: 'with Confidence.',
+                      style: TextStyle(
+                        fontFamily: 'HavenSerif',
+                        fontStyle: FontStyle.italic,
+                        fontWeight: FontWeight.w400,
+                        color: HavenTheme.forest,
+                      ),
+                    ),
+                  ]
+                : [
+                    TextSpan(
+                      text: context.tr(
+                        'Find Your Perfect Space with Confidence.',
+                      ),
+                    ),
+                  ],
+          ),
+          style: Theme.of(context).textTheme.headlineLarge?.copyWith(
+            color: HavenTheme.ink,
+            fontSize: headingSize,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -2.6,
+            height: 1.05,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          context.tr(
+            'Discover verified places to stay and homes to rent across Tanzania.',
+          ),
+          style: Theme.of(
+            context,
+          ).textTheme.bodyLarge?.copyWith(color: HavenTheme.muted),
+        ),
+        const SizedBox(height: 32),
+        search,
+        const SizedBox(height: 18),
+        Wrap(
+          spacing: 16,
+          runSpacing: 8,
           children: [
-            SizedBox(
-              height: 134,
-              width: double.infinity,
-              child: Image.network(
-                imageUrl,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) =>
-                    const ColoredBox(color: Color(0xFFE5E9DE)),
-              ),
+            _TrustLabel(
+              icon: HavenIcons.verifiedOutlined,
+              label: context.tr('Verification status shown'),
             ),
-            Padding(
-              padding: const EdgeInsets.all(17),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(icon, color: HavenTheme.forest),
-                  const SizedBox(height: 9),
-                  Text(title, style: Theme.of(context).textTheme.titleLarge),
-                  const SizedBox(height: 5),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(color: HavenTheme.muted),
-                  ),
-                  const SizedBox(height: 12),
-                  TextButton.icon(
-                    onPressed: onTap,
-                    iconAlignment: IconAlignment.end,
-                    icon: const Icon(Icons.arrow_forward, size: 17),
-                    label: Text(actionLabel),
-                  ),
-                ],
-              ),
+            _TrustLabel(
+              icon: HavenIcons.lockOutline,
+              label: context.tr('Rental contacts kept private'),
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _SectionHeading extends StatelessWidget {
-  const _SectionHeading({
-    required this.title,
-    required this.subtitle,
-    this.action,
-  });
-
-  final String title;
-  final String subtitle;
-  final Widget? action;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: Theme.of(context).textTheme.headlineMedium),
-              const SizedBox(height: 4),
-              Text(subtitle, style: const TextStyle(color: HavenTheme.muted)),
-            ],
-          ),
-        ),
-        ?action,
       ],
     );
   }
 }
 
-class _PropertyGrid extends StatelessWidget {
-  const _PropertyGrid({
-    required this.properties,
-    required this.store,
-    required this.onOpenProperty,
+class _TrustLabel extends StatelessWidget {
+  const _TrustLabel({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Icon(icon, size: 16, color: HavenTheme.forest),
+      const SizedBox(width: 6),
+      Flexible(
+        child: Text(
+          label,
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: HavenTheme.ink),
+        ),
+      ),
+    ],
+  );
+}
+
+class _FeaturedPropertyCard extends StatelessWidget {
+  const _FeaturedPropertyCard({
+    required this.property,
+    required this.onTap,
+    required this.compact,
   });
 
-  final List<Property> properties;
-  final HavenLinkStore store;
-  final ValueChanged<Property> onOpenProperty;
+  final Property? property;
+  final VoidCallback? onTap;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final columns = constraints.maxWidth > 740 ? 2 : 1;
-        return GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: properties.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
-            crossAxisSpacing: 14,
-            mainAxisSpacing: 14,
-            mainAxisExtent: 390,
+    final height = compact ? 260.0 : 440.0;
+    return Material(
+      color: HavenTheme.white,
+      borderRadius: BorderRadius.circular(32),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        key: const Key('featured-property-card'),
+        onTap: onTap,
+        child: SizedBox(
+          height: height,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (property != null && property!.imageUrl.isNotEmpty)
+                PropertyPhoto(imageUrl: property!.imageUrl, height: height)
+              else
+                property != null
+                    ? const ColoredBox(
+                        color: HavenTheme.lightMint,
+                        child: Icon(
+                          HavenIcons.homeWorkOutlined,
+                          size: 56,
+                          color: HavenTheme.forest,
+                        ),
+                      )
+                    : Image.asset(
+                        'assets/images/stay-hero.jpg',
+                        fit: BoxFit.cover,
+                        semanticLabel:
+                            'Accommodation inspiration from the Haven Link design',
+                      ),
+              Positioned(
+                left: 16,
+                right: 16,
+                bottom: 14,
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: HavenTheme.white.withValues(alpha: 0.95),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              context.tr(
+                                property?.isVerified == true
+                                    ? 'Verified property'
+                                    : 'Featured property',
+                              ),
+                              style: const TextStyle(
+                                color: HavenTheme.forest,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              property?.name ??
+                                  context.tr('New places are coming'),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.titleLarge
+                                  ?.copyWith(color: HavenTheme.ink),
+                            ),
+                            if (property != null)
+                              Text(
+                                '${property!.neighborhood}, ${property!.city}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: HavenTheme.muted,
+                                  fontSize: 12,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      if ((property?.rating ?? 0) > 0) ...[
+                        const SizedBox(width: 8),
+                        Row(
+                          children: [
+                            const Icon(
+                              HavenIcons.starRounded,
+                              size: 17,
+                              color: HavenTheme.gold,
+                            ),
+                            Text(
+                              property!.rating.toStringAsFixed(1),
+                              style: const TextStyle(
+                                color: HavenTheme.ink,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
-          itemBuilder: (context, index) => PropertyCard(
-            property: properties[index],
-            store: store,
-            onTap: () => onOpenProperty(properties[index]),
-          ),
-        );
-      },
+        ),
+      ),
     );
   }
 }
@@ -550,17 +437,33 @@ class _LoadingError extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.wifi_off_outlined, size: 42),
+          const Icon(HavenIcons.wifiOffOutlined, size: 42),
           const SizedBox(height: 12),
           Text(message, textAlign: TextAlign.center),
           const SizedBox(height: 12),
           OutlinedButton.icon(
             onPressed: onRetry,
-            icon: const Icon(Icons.refresh),
-            label: const Text('Try again'),
+            icon: const Icon(HavenIcons.refresh),
+            label: Text(context.tr('Try again')),
           ),
         ],
       ),
     );
   }
+}
+
+class _HomeBand extends StatelessWidget {
+  const _HomeBand({required this.child, this.color, super.key});
+  final Widget child;
+  final Color? color;
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+    color: color ?? HavenTheme.veryLightMint,
+    child: Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 1320),
+        child: child,
+      ),
+    ),
+  );
 }

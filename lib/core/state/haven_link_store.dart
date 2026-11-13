@@ -219,6 +219,13 @@ class HavenLinkStore extends ChangeNotifier {
                   DateTime.now(),
               status: status,
               paymentTransactionId: row['paymentTransactionId'] as String?,
+              roomTypeName:
+                  (row['roomType'] as Map<String, dynamic>?)?['name']
+                      as String?,
+              assignedRoomNumber:
+                  (row['assignedRoom'] as Map<String, dynamic>?)?['roomNumber']
+                      as String?,
+              guestCount: (row['guestCount'] as num?)?.toInt() ?? 1,
             );
           }).whereType<Booking>(),
         );
@@ -259,11 +266,23 @@ class HavenLinkStore extends ChangeNotifier {
   // ---------------------------------------------------------------------------
 
   /// Creates or replaces a listing and refreshes local state.
-  Future<Property> saveListing(Property property) async {
-    final saved = await _repository.save(property);
+  Future<Property> saveListing(
+    Property property, {
+    bool confirmInventoryModelChange = false,
+    bool saveAsDraft = false,
+  }) async {
+    final saved = await _repository.save(
+      property,
+      confirmInventoryModelChange: confirmInventoryModelChange,
+      saveAsDraft: saveAsDraft,
+    );
     await loadProperties();
     return saved;
   }
+
+  Future<List<String>> uploadListingPhotos(
+    List<({String name, List<int> bytes})> files,
+  ) => _repository.uploadPhotos(files);
 
   Future<void> setListingStatus(String id, ListingStatus status) async {
     await _repository.updateStatus(id, status);
@@ -273,6 +292,29 @@ class HavenLinkStore extends ChangeNotifier {
   Future<void> deleteListing(String id) async {
     await _repository.delete(id);
     await loadProperties();
+  }
+
+  Future<List<Map<String, dynamic>>> loadBookingMessages(
+    String bookingId,
+  ) async {
+    if (!EnvConfig.backendConfigured) {
+      throw StateError(
+        'Guest messaging requires a configured Haven Link backend.',
+      );
+    }
+    return _customerData.loadBookingMessages(bookingId);
+  }
+
+  Future<void> sendBookingMessage({
+    required String bookingId,
+    required String body,
+  }) async {
+    if (!EnvConfig.backendConfigured) {
+      throw StateError(
+        'Guest messaging requires a configured Haven Link backend.',
+      );
+    }
+    await _customerData.sendBookingMessage(bookingId: bookingId, body: body);
   }
 
   Future<void> reportListing(String id) async {
@@ -335,6 +377,7 @@ class HavenLinkStore extends ChangeNotifier {
     required String sessionId,
     required AccountRole role,
     Set<AgentCapability> capabilities = const {},
+    Set<AgentWorkspace> workspaces = const {},
   }) async {
     final user = await _authentication.register(
       fullName: fullName,
@@ -345,6 +388,7 @@ class HavenLinkStore extends ChangeNotifier {
       sessionId: sessionId,
       role: role,
       capabilities: capabilities,
+      workspaces: workspaces,
     );
     _user = user;
     await loadProperties();
@@ -468,6 +512,20 @@ class HavenLinkStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Early-stage access: asks the server to open a rental's exact location and
+  /// contact without a fee. The server refuses once payments are configured,
+  /// in which case callers fall back to the paid checkout.
+  Future<void> openRentalDetails(Property property) async {
+    if (property.businessModel != PropertyBusinessModel.contactUnlock) {
+      throw StateError('Only rentals can be opened this way.');
+    }
+    _requireCustomer();
+    if (isUnlocked(property.id)) return;
+    await _customerData.openRentalDetails(property.id);
+    await _loadCustomerRecords();
+    notifyListeners();
+  }
+
   /// Charges the contact-unlock fee and, only on a server-confirmed payment,
   /// releases the protected contact for exactly this listing.
   ///
@@ -550,6 +608,10 @@ class HavenLinkStore extends ChangeNotifier {
     required DateTime checkOut,
     required String guestName,
     required PaymentMethod method,
+    String? roomTypeId,
+    String? roomTypeName,
+    int? nightlyPriceTzs,
+    int guestCount = 1,
   }) async {
     if (property.businessModel != PropertyBusinessModel.bookable) {
       throw StateError(
@@ -564,14 +626,16 @@ class HavenLinkStore extends ChangeNotifier {
       throw StateError('Check-out must be after check-in.');
     }
 
-    final subtotal = property.priceTzs * nights;
+    final subtotal = (nightlyPriceTzs ?? property.priceTzs) * nights;
     final fee = _fees.bookingFeeFor(subtotal);
     final total = subtotal + fee;
 
     final key =
         'booking:${customer.id}:${property.id}:'
-        '${checkIn.toIso8601String()}:${checkOut.toIso8601String()}';
+        '${checkIn.toIso8601String()}:${checkOut.toIso8601String()}:'
+        '${roomTypeId ?? 'default'}:${DateTime.now().microsecondsSinceEpoch}';
     String? serverBookingId;
+    String? serverRoomNumber;
     var serverSubtotal = subtotal;
     var serverFee = fee;
     var serverTotal = total;
@@ -582,9 +646,12 @@ class HavenLinkStore extends ChangeNotifier {
         checkIn: checkIn,
         checkOut: checkOut,
         guestName: guestName,
+        roomTypeId: roomTypeId,
+        guestCount: guestCount,
       );
       final record = result['booking'] as Map<String, dynamic>;
       serverBookingId = record['id'] as String;
+      serverRoomNumber = record['assignedRoomNumber'] as String?;
       serverSubtotal = (record['subtotalTzs'] as num).toInt();
       serverFee = (record['feeTzs'] as num).toInt();
       serverTotal = (record['totalTzs'] as num).toInt();
@@ -625,6 +692,9 @@ class HavenLinkStore extends ChangeNotifier {
       totalTzs: serverTotal,
       createdAt: now,
       paymentTransactionId: verified.id,
+      roomTypeName: roomTypeName,
+      assignedRoomNumber: serverRoomNumber,
+      guestCount: guestCount,
     );
     _bookings.insert(0, booking);
     _appendPayment(property, verified, method.label);
@@ -635,6 +705,23 @@ class HavenLinkStore extends ChangeNotifier {
     );
     notifyListeners();
     return booking;
+  }
+
+  Future<void> cancelCustomerBooking(Booking booking) async {
+    _requireCustomer();
+    if (!EnvConfig.backendConfigured) {
+      throw StateError(
+        'A live booking service is required to cancel a booking.',
+      );
+    }
+    await _customerData.cancelBooking(booking.id);
+    final index = _bookings.indexWhere((item) => item.id == booking.id);
+    if (index >= 0) {
+      _bookings[index] = _bookings[index].copyWith(
+        status: BookingStatus.cancelled,
+      );
+      notifyListeners();
+    }
   }
 
   // ---------------------------------------------------------------------------

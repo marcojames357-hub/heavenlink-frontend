@@ -4,12 +4,20 @@ enum PropertyBusinessModel { bookable, contactUnlock }
 
 enum PropertyCategory {
   hotel,
+  motel,
   lodge,
   servicedApartment,
   shortStayApartment,
   house,
   room,
-  sharedAccommodation,
+  sharedAccommodation;
+
+  /// Whole-unit short-stay listings managed in the Apartment workspace.
+  bool get isApartmentStay =>
+      this == servicedApartment || this == shortStayApartment;
+
+  /// Room-inventory listings managed in the Hotel workspace.
+  bool get isHotelStay => this == hotel || this == motel || this == lodge;
 }
 
 /// Moderation state of a listing.
@@ -32,7 +40,108 @@ enum ListingStatus {
 
 enum VerificationStatus { unverified, pending, verified }
 
+enum LocationVisibility { exact, approximate, hidden }
+
 enum BookingStatus { active, pending, completed, cancelled }
+
+class AmenityDetail {
+  const AmenityDetail({required this.name, this.description = ''});
+
+  final String name;
+  final String description;
+
+  factory AmenityDetail.fromJson(Map<String, dynamic> json) => AmenityDetail(
+    name: json['name'] as String? ?? '',
+    description: json['description'] as String? ?? '',
+  );
+
+  Map<String, String> toJson() => {
+    'name': name,
+    if (description.trim().isNotEmpty) 'description': description.trim(),
+  };
+}
+
+/// Host-defined limits and policies for a whole-unit apartment.
+class StayRules {
+  const StayRules({
+    this.minNights,
+    this.maxNights,
+    this.checkInTime = '',
+    this.checkOutTime = '',
+    this.cancellationPolicy = '',
+    this.houseRules = '',
+    this.weekendPriceTzs,
+    this.cleaningFeeTzs,
+    this.beds,
+    this.country = '',
+    this.region = '',
+    this.photoLabels = const {},
+  });
+
+  /// Room area captured for each photo URL (living room, bedroom, ...).
+  final Map<String, String> photoLabels;
+
+  final int? minNights;
+  final int? maxNights;
+  final String checkInTime;
+  final String checkOutTime;
+  final String cancellationPolicy;
+  final String houseRules;
+  final int? weekendPriceTzs;
+  final int? cleaningFeeTzs;
+  final int? beds;
+  final String country;
+  final String region;
+
+  bool get isEmpty =>
+      minNights == null &&
+      maxNights == null &&
+      weekendPriceTzs == null &&
+      cleaningFeeTzs == null &&
+      beds == null &&
+      country.isEmpty &&
+      region.isEmpty &&
+      checkInTime.isEmpty &&
+      checkOutTime.isEmpty &&
+      cancellationPolicy.isEmpty &&
+      houseRules.isEmpty;
+
+  factory StayRules.fromJson(Map<String, dynamic> json) => StayRules(
+    photoLabels: {
+      for (final entry
+          in (json['photoLabels'] as Map<String, dynamic>? ?? const {}).entries)
+        if (entry.value is String) entry.key: entry.value as String,
+    },
+    country: json['country'] as String? ?? '',
+    region: json['region'] as String? ?? '',
+    minNights: (json['minNights'] as num?)?.toInt(),
+    maxNights: (json['maxNights'] as num?)?.toInt(),
+    checkInTime: json['checkInTime'] as String? ?? '',
+    checkOutTime: json['checkOutTime'] as String? ?? '',
+    cancellationPolicy: json['cancellationPolicy'] as String? ?? '',
+    houseRules: json['houseRules'] as String? ?? '',
+    weekendPriceTzs: (json['weekendPriceTzs'] as num?)?.toInt(),
+    cleaningFeeTzs: (json['cleaningFeeTzs'] as num?)?.toInt(),
+    beds: (json['beds'] as num?)?.toInt(),
+  );
+
+  Map<String, Object?> toJson() => {
+    'photoLabels': photoLabels.isEmpty ? null : photoLabels,
+    'country': country.isEmpty ? null : country,
+    'region': region.isEmpty ? null : region,
+    'minNights': minNights,
+    'maxNights': maxNights,
+    'weekendPriceTzs': weekendPriceTzs,
+    'cleaningFeeTzs': cleaningFeeTzs,
+    'beds': beds,
+    'checkInTime': checkInTime.isEmpty ? null : checkInTime,
+    'checkOutTime': checkOutTime.isEmpty ? null : checkOutTime,
+    'cancellationPolicy': cancellationPolicy.isEmpty
+        ? null
+        : cancellationPolicy,
+    'houseRules': houseRules.isEmpty ? null : houseRules,
+  };
+}
 
 class Property {
   const Property({
@@ -59,11 +168,19 @@ class Property {
     required this.propertyVerification,
     required this.ownerVerification,
     required this.managerName,
+    this.maxGuests,
+    this.stayRules,
+    this.amenityDetails = const [],
     this.listingStatus = ListingStatus.published,
     this.agentId = '',
     this.imageUrls = const [],
     this.rentalPeriod = 'month',
     this.reportedCount = 0,
+    this.latitude,
+    this.longitude,
+    this.formattedAddress,
+    this.locationVerification = VerificationStatus.unverified,
+    this.locationVisibility = LocationVisibility.approximate,
   });
 
   final String id;
@@ -81,7 +198,12 @@ class Property {
   final int reviewCount;
   final int bedrooms;
   final int bathrooms;
+
+  /// Whole-unit apartments only: total guests the unit sleeps.
+  final int? maxGuests;
+  final StayRules? stayRules;
   final List<String> amenities;
+  final List<AmenityDetail> amenityDetails;
   final String description;
   final bool available;
   final bool furnished;
@@ -104,6 +226,11 @@ class Property {
 
   /// Number of customer reports; administrators triage these.
   final int reportedCount;
+  final double? latitude;
+  final double? longitude;
+  final String? formattedAddress;
+  final VerificationStatus locationVerification;
+  final LocationVisibility locationVisibility;
 
   bool get isVerified =>
       propertyVerification == VerificationStatus.verified &&
@@ -114,6 +241,7 @@ class Property {
   bool get hasValidBusinessModel => switch (businessModel) {
     PropertyBusinessModel.bookable =>
       category == PropertyCategory.hotel ||
+          category == PropertyCategory.motel ||
           category == PropertyCategory.lodge ||
           category == PropertyCategory.servicedApartment ||
           category == PropertyCategory.shortStayApartment,
@@ -143,7 +271,10 @@ class Property {
     int? reviewCount,
     int? bedrooms,
     int? bathrooms,
+    int? maxGuests,
+    StayRules? stayRules,
     List<String>? amenities,
+    List<AmenityDetail>? amenityDetails,
     String? description,
     bool? available,
     bool? furnished,
@@ -156,6 +287,11 @@ class Property {
     String? agentId,
     String? rentalPeriod,
     int? reportedCount,
+    double? latitude,
+    double? longitude,
+    String? formattedAddress,
+    VerificationStatus? locationVerification,
+    LocationVisibility? locationVisibility,
   }) {
     return Property(
       id: id,
@@ -171,7 +307,10 @@ class Property {
       reviewCount: reviewCount ?? this.reviewCount,
       bedrooms: bedrooms ?? this.bedrooms,
       bathrooms: bathrooms ?? this.bathrooms,
+      maxGuests: maxGuests ?? this.maxGuests,
+      stayRules: stayRules ?? this.stayRules,
       amenities: amenities ?? this.amenities,
+      amenityDetails: amenityDetails ?? this.amenityDetails,
       description: description ?? this.description,
       available: available ?? this.available,
       furnished: furnished ?? this.furnished,
@@ -186,6 +325,11 @@ class Property {
       agentId: agentId ?? this.agentId,
       rentalPeriod: rentalPeriod ?? this.rentalPeriod,
       reportedCount: reportedCount ?? this.reportedCount,
+      latitude: latitude ?? this.latitude,
+      longitude: longitude ?? this.longitude,
+      formattedAddress: formattedAddress ?? this.formattedAddress,
+      locationVerification: locationVerification ?? this.locationVerification,
+      locationVisibility: locationVisibility ?? this.locationVisibility,
     );
   }
 }
@@ -210,6 +354,9 @@ class Booking {
     required this.createdAt,
     this.status = BookingStatus.active,
     this.paymentTransactionId,
+    this.roomTypeName,
+    this.assignedRoomNumber,
+    this.guestCount = 1,
   });
 
   final String id;
@@ -225,6 +372,30 @@ class Booking {
 
   /// Verified payment that confirmed this reservation.
   final String? paymentTransactionId;
+  final String? roomTypeName;
+  final String? assignedRoomNumber;
+  final int guestCount;
+
+  Booking copyWith({
+    BookingStatus? status,
+    String? assignedRoomNumber,
+    int? guestCount,
+  }) => Booking(
+    id: id,
+    property: property,
+    checkIn: checkIn,
+    checkOut: checkOut,
+    guestName: guestName,
+    subtotalTzs: subtotalTzs,
+    feeTzs: feeTzs,
+    totalTzs: totalTzs,
+    createdAt: createdAt,
+    status: status ?? this.status,
+    paymentTransactionId: paymentTransactionId,
+    roomTypeName: roomTypeName,
+    assignedRoomNumber: assignedRoomNumber ?? this.assignedRoomNumber,
+    guestCount: guestCount ?? this.guestCount,
+  );
 }
 
 class PaymentRecord {

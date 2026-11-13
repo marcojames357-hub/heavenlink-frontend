@@ -26,7 +26,6 @@ abstract interface class AuthenticationRepository {
     required String sessionId,
     required AccountRole role,
     Set<AgentCapability> capabilities = const {},
+    Set<AgentWorkspace> workspaces = const {},
   });
-
-  Future<void> sendPasswordReset(String email);
 }

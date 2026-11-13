@@ -6,9 +6,19 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "test": "jest"
+    "seed": "node src/seed.js",
+    "seed:stays": "node src/seedStays.js",
+    "seed:apartments": "node src/seedApartments.js",
+    "test": "jest",
+    "seed:demo": "node src/seedDemo.js",
+    "demo:api": "node src/demoServer.js"
   },
-  "keywords": ["haven-link", "tanzania", "rentals", "accommodation"],
+  "keywords": [
+    "haven-link",
+    "tanzania",
+    "rentals",
+    "accommodation"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {

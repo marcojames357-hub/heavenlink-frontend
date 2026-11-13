@@ -23,13 +23,22 @@ abstract interface class PropertyRepository {
   Future<void> setSavedProperty(String propertyId, bool saved);
 
   /// Creates or replaces a listing.
-  Future<Property> save(Property property);
+  Future<Property> save(
+    Property property, {
+    bool confirmInventoryModelChange = false,
+    bool saveAsDraft = false,
+  });
 
   Future<void> delete(String propertyId);
 
   Future<void> updateStatus(String propertyId, ListingStatus status);
 
   Future<void> incrementReportCount(String propertyId);
+
+  /// Uploads listing photos and returns their public https URLs.
+  Future<List<String>> uploadPhotos(
+    List<({String name, List<int> bytes})> files,
+  );
 }
 
 class HttpPropertyRepository implements PropertyRepository {
@@ -105,13 +114,17 @@ class HttpPropertyRepository implements PropertyRepository {
       role: json['role'] as String? ?? '',
       phone: json['phone'] as String? ?? '',
       whatsApp: json['whatsApp'] as String? ?? '',
-      latitude: (json['latitude'] as num?)?.toDouble() ?? 0,
-      longitude: (json['longitude'] as num?)?.toDouble() ?? 0,
+      latitude: _asDouble(json['latitude']) ?? 0,
+      longitude: _asDouble(json['longitude']) ?? 0,
     );
   }
 
   @override
-  Future<Property> save(Property property) async {
+  Future<Property> save(
+    Property property, {
+    bool confirmInventoryModelChange = false,
+    bool saveAsDraft = false,
+  }) async {
     final isExisting = _knownIds.contains(property.id);
     final path = isExisting
         ? '/api/v1/properties/${Uri.encodeComponent(property.id)}'
@@ -120,7 +133,11 @@ class HttpPropertyRepository implements PropertyRepository {
       isExisting ? 'PUT' : 'POST',
       path,
       authenticated: true,
-      body: _propertyToJson(property, includeId: isExisting),
+      body: {
+        ..._propertyToJson(property, includeId: isExisting),
+        if (confirmInventoryModelChange) 'confirmInventoryModelChange': true,
+        if (!isExisting && saveAsDraft) 'saveAsDraft': true,
+      },
     );
     final json = result['property'];
     if (json is! Map<String, dynamic>) {
@@ -159,6 +176,55 @@ class HttpPropertyRepository implements PropertyRepository {
       authenticated: true,
       body: const {},
     );
+  }
+
+  @override
+  Future<List<String>> uploadPhotos(
+    List<({String name, List<int> bytes})> files,
+  ) async {
+    final token = _tokenProvider();
+    if (token == null || token.isEmpty) {
+      throw StateError('Sign in to upload photos.');
+    }
+    try {
+      final request =
+          http.MultipartRequest(
+              'POST',
+              EnvConfig.endpoint('/api/v1/properties/photos'),
+            )
+            ..headers['authorization'] = '******'
+            ..files.addAll([
+              for (final file in files)
+                http.MultipartFile.fromBytes(
+                  'photos',
+                  file.bytes,
+                  filename: file.name,
+                ),
+            ]);
+      final streamed = await _client
+          .send(request)
+          .timeout(const Duration(seconds: 60));
+      final response = await http.Response.fromStream(streamed);
+      final decoded = response.body.isEmpty
+          ? <String, dynamic>{}
+          : jsonDecode(response.body);
+      if (response.statusCode >= 400) {
+        final message = decoded is Map<String, dynamic>
+            ? decoded['message'] as String? ?? decoded['error'] as String?
+            : null;
+        throw StateError(message ?? 'The photos were rejected.');
+      }
+      return ((decoded as Map<String, dynamic>)['urls'] as List<dynamic>? ??
+              const [])
+          .whereType<String>()
+          .toList(growable: false);
+    } on StateError {
+      rethrow;
+    } catch (_) {
+      throw StateError(
+        'We could not upload the photos. Check your connection.',
+      );
+    }
   }
 
   Future<Map<String, dynamic>> _request(
@@ -221,7 +287,7 @@ class HttpPropertyRepository implements PropertyRepository {
       ),
       category: enumValue(
         PropertyCategory.values,
-        json['category'],
+        json['accommodationType'] ?? json['category'],
         PropertyCategory.house,
       ),
       imageUrl: json['imageUrl'] as String? ?? '',
@@ -230,8 +296,16 @@ class HttpPropertyRepository implements PropertyRepository {
       reviewCount: (json['reviewCount'] as num?)?.toInt() ?? 0,
       bedrooms: (json['bedrooms'] as num?)?.toInt() ?? 0,
       bathrooms: (json['bathrooms'] as num?)?.toInt() ?? 0,
+      maxGuests: (json['maxGuests'] as num?)?.toInt(),
+      stayRules: json['stayRules'] is Map<String, dynamic>
+          ? StayRules.fromJson(json['stayRules'] as Map<String, dynamic>)
+          : null,
       amenities: (json['amenities'] as List<dynamic>? ?? const [])
           .whereType<String>()
+          .toList(growable: false),
+      amenityDetails: (json['amenityDetails'] as List<dynamic>? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(AmenityDetail.fromJson)
           .toList(growable: false),
       description: json['description'] as String? ?? '',
       available: json['available'] as bool? ?? true,
@@ -259,6 +333,19 @@ class HttpPropertyRepository implements PropertyRepository {
       agentId: json['agentId'] as String? ?? '',
       rentalPeriod: json['rentalPeriod'] as String? ?? 'month',
       reportedCount: (json['reportedCount'] as num?)?.toInt() ?? 0,
+      latitude: _asDouble(json['latitude']),
+      longitude: _asDouble(json['longitude']),
+      formattedAddress: json['formattedAddress'] as String?,
+      locationVerification: enumValue(
+        VerificationStatus.values,
+        json['locationVerification'],
+        VerificationStatus.unverified,
+      ),
+      locationVisibility: enumValue(
+        LocationVisibility.values,
+        json['locationVisibility'],
+        LocationVisibility.approximate,
+      ),
     );
   }
 
@@ -272,12 +359,27 @@ class HttpPropertyRepository implements PropertyRepository {
     'neighborhood': property.neighborhood,
     'priceTzs': property.priceTzs,
     'businessModel': property.businessModel.name,
-    'category': property.category.name,
+    'category': property.category == PropertyCategory.motel
+        ? PropertyCategory.hotel.name
+        : property.category.name,
+    if ([
+      PropertyCategory.hotel,
+      PropertyCategory.motel,
+      PropertyCategory.lodge,
+    ].contains(property.category))
+      'accommodationType': property.category.name,
     'imageUrl': property.imageUrl,
     'imageUrls': property.imageUrls,
     'bedrooms': property.bedrooms,
     'bathrooms': property.bathrooms,
+    if (property.category.isApartmentStay) ...{
+      'maxGuests': property.maxGuests,
+      'stayRules': property.stayRules?.toJson(),
+    },
     'amenities': property.amenities,
+    'amenityDetails': property.amenityDetails
+        .map((amenity) => amenity.toJson())
+        .toList(growable: false),
     'description': property.description,
     'available': property.available,
     'furnished': property.furnished,
@@ -287,6 +389,10 @@ class HttpPropertyRepository implements PropertyRepository {
     'security': property.security,
     'managerName': property.managerName,
     'rentalPeriod': property.rentalPeriod,
+    'latitude': property.latitude,
+    'longitude': property.longitude,
+    'formattedAddress': property.formattedAddress,
+    'locationVisibility': property.locationVisibility.name,
   };
 }
 
@@ -311,7 +417,11 @@ class UnconfiguredPropertyRepository implements PropertyRepository {
       throw _unavailable();
 
   @override
-  Future<Property> save(Property property) async => throw _unavailable();
+  Future<Property> save(
+    Property property, {
+    bool confirmInventoryModelChange = false,
+    bool saveAsDraft = false,
+  }) async => throw _unavailable();
 
   @override
   Future<void> delete(String propertyId) async => throw _unavailable();
@@ -323,6 +433,11 @@ class UnconfiguredPropertyRepository implements PropertyRepository {
   @override
   Future<void> incrementReportCount(String propertyId) async =>
       throw _unavailable();
+
+  @override
+  Future<List<String>> uploadPhotos(
+    List<({String name, List<int> bytes})> files,
+  ) async => throw _unavailable();
 }
 
 PropertyRepository resolvePropertyRepository({
@@ -340,217 +455,14 @@ PropertyRepository resolvePropertyRepository({
 }
 
 class MockPropertyRepository implements PropertyRepository {
-  MockPropertyRepository() : _properties = _seedWithOwnership();
-
-  /// Demo agent accounts that own the seeded listings.
-  static const String kRentalAgentId = 'agent-rental-1';
-  static const String kStayAgentId = 'agent-stay-1';
-
-  static const List<Property> _base = [
-    Property(
-      id: 'stay-01',
-      name: 'The Oyster Bay House',
-      city: 'Dar es Salaam',
-      neighborhood: 'Oyster Bay',
-      priceTzs: 800000,
-      businessModel: PropertyBusinessModel.bookable,
-      category: PropertyCategory.servicedApartment,
-      imageUrl:
-          'https://images.unsplash.com/photo-1600210492486-724fe5c67fb0?w=1200&auto=format&fit=crop',
-      rating: 4.9,
-      reviewCount: 38,
-      bedrooms: 2,
-      bathrooms: 2,
-      amenities: ['Wi-Fi', 'Pool', 'Air conditioning', 'Breakfast'],
-      description:
-          'A calm, design-led stay in the heart of Oyster Bay, with generous living spaces and attentive on-site hosting.',
-      available: true,
-      furnished: true,
-      parking: true,
-      water: true,
-      electricity: true,
-      security: true,
-      propertyVerification: VerificationStatus.verified,
-      ownerVerification: VerificationStatus.verified,
-      managerName: 'Haven Stay Team',
-    ),
-    Property(
-      id: 'stay-02',
-      name: 'Masaki Palm Lodge',
-      city: 'Dar es Salaam',
-      neighborhood: 'Masaki',
-      priceTzs: 320000,
-      businessModel: PropertyBusinessModel.bookable,
-      category: PropertyCategory.lodge,
-      imageUrl:
-          'https://images.unsplash.com/photo-1611892440504-42a792e24d32?w=1200&auto=format&fit=crop',
-      rating: 4.7,
-      reviewCount: 24,
-      bedrooms: 1,
-      bathrooms: 1,
-      amenities: ['Wi-Fi', 'Garden', 'Airport transfer'],
-      description:
-          'A leafy boutique lodge close to the waterfront, local dining and the city’s business district.',
-      available: true,
-      furnished: true,
-      parking: true,
-      water: true,
-      electricity: true,
-      security: true,
-      propertyVerification: VerificationStatus.verified,
-      ownerVerification: VerificationStatus.verified,
-      managerName: 'Neema M.',
-    ),
-    Property(
-      id: 'rent-01',
-      name: 'Bright Mbezi Beach Home',
-      city: 'Dar es Salaam',
-      neighborhood: 'Mbezi Beach',
-      priceTzs: 650000,
-      businessModel: PropertyBusinessModel.contactUnlock,
-      category: PropertyCategory.house,
-      imageUrl:
-          'https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?w=1200&auto=format&fit=crop',
-      rating: 4.8,
-      reviewCount: 12,
-      bedrooms: 2,
-      bathrooms: 2,
-      amenities: ['Parking', 'Water tank', 'Electricity', 'Security'],
-      description:
-          'A bright, unfurnished family home in a quiet part of Mbezi Beach, with reliable utilities and a private garden.',
-      available: true,
-      furnished: false,
-      parking: true,
-      water: true,
-      electricity: true,
-      security: true,
-      propertyVerification: VerificationStatus.verified,
-      ownerVerification: VerificationStatus.verified,
-      managerName: 'Verified owner',
-    ),
-    Property(
-      id: 'rent-02',
-      name: 'Sinza Self-Contained Room',
-      city: 'Dar es Salaam',
-      neighborhood: 'Sinza',
-      priceTzs: 280000,
-      businessModel: PropertyBusinessModel.contactUnlock,
-      category: PropertyCategory.room,
-      imageUrl:
-          'https://images.unsplash.com/photo-1616486338812-3dadae4b4ace?w=1200&auto=format&fit=crop',
-      rating: 4.5,
-      reviewCount: 8,
-      bedrooms: 1,
-      bathrooms: 1,
-      amenities: ['Water', 'Electricity', 'Security', 'Tiled floors'],
-      description:
-          'A neat self-contained room with a private bathroom, convenient to daladala routes and everyday shops.',
-      available: true,
-      furnished: false,
-      parking: false,
-      water: true,
-      electricity: true,
-      security: true,
-      propertyVerification: VerificationStatus.pending,
-      ownerVerification: VerificationStatus.verified,
-      managerName: 'Verified agent',
-    ),
-    Property(
-      id: 'rent-03',
-      name: 'Kinondoni Garden Apartment',
-      city: 'Dar es Salaam',
-      neighborhood: 'Kinondoni',
-      priceTzs: 950000,
-      businessModel: PropertyBusinessModel.contactUnlock,
-      category: PropertyCategory.house,
-      imageUrl:
-          'https://images.unsplash.com/photo-1600566753086-00f18fb6b3ea?w=1200&auto=format&fit=crop',
-      rating: 4.6,
-      reviewCount: 15,
-      bedrooms: 3,
-      bathrooms: 2,
-      amenities: ['Garden', 'Parking', 'Water', 'Security'],
-      description:
-          'A spacious unfurnished apartment with a shaded garden and easy access to central Kinondoni.',
-      available: true,
-      furnished: false,
-      parking: true,
-      water: true,
-      electricity: true,
-      security: true,
-      propertyVerification: VerificationStatus.verified,
-      ownerVerification: VerificationStatus.pending,
-      managerName: 'Property manager',
-    ),
-    Property(
-      id: 'stay-03',
-      name: 'Arusha Highland Retreat',
-      city: 'Arusha',
-      neighborhood: 'Njiro',
-      priceTzs: 420000,
-      businessModel: PropertyBusinessModel.bookable,
-      category: PropertyCategory.hotel,
-      imageUrl:
-          'https://images.unsplash.com/photo-1566073771259-6a8506099945?w=1200&auto=format&fit=crop',
-      rating: 4.9,
-      reviewCount: 51,
-      bedrooms: 1,
-      bathrooms: 1,
-      amenities: ['Restaurant', 'Garden', 'Wi-Fi', 'Airport transfer'],
-      description:
-          'A welcoming highland hideaway with a garden restaurant and easy access to Arusha’s city centre.',
-      available: true,
-      furnished: true,
-      parking: true,
-      water: true,
-      electricity: true,
-      security: true,
-      propertyVerification: VerificationStatus.verified,
-      ownerVerification: VerificationStatus.verified,
-      managerName: 'Asha, property manager',
-    ),
-  ];
-
-  static const Map<String, OwnerContact> _authorizedContacts = {
-    'rent-01': OwnerContact(
-      exactAddress: 'Plot 18, Bahari Road, Mbezi Beach, Dar es Salaam',
-      contactName: 'Mariam Joseph',
-      role: 'Verified property owner',
-      phone: '+255 754 000 111',
-      whatsApp: '+255754000111',
-      latitude: -6.7088,
-      longitude: 39.2252,
-    ),
-    'rent-02': OwnerContact(
-      exactAddress: 'House 7, Mbuyuni Street, Sinza, Dar es Salaam',
-      contactName: 'Juma Kweka',
-      role: 'Authorized property agent',
-      phone: '+255 713 000 222',
-      whatsApp: '+255713000222',
-      latitude: -6.7791,
-      longitude: 39.2217,
-    ),
-    'rent-03': OwnerContact(
-      exactAddress: 'Apartment 4, Garden Lane, Kinondoni, Dar es Salaam',
-      contactName: 'Rehema Said',
-      role: 'Verified property owner',
-      phone: '+255 687 000 333',
-      whatsApp: '+255687000333',
-      latitude: -6.7853,
-      longitude: 39.2661,
-    ),
-    'rent-04': OwnerContact(
-      exactAddress: 'Block C, Mwai Kibaki Road, Ubungo, Dar es Salaam',
-      contactName: 'Hassan Mrisho',
-      role: 'Authorized property agent',
-      phone: '+255 765 000 444',
-      whatsApp: '+255765000444',
-      latitude: -6.7809,
-      longitude: 39.2441,
-    ),
-  };
+  MockPropertyRepository({
+    List<Property> properties = const [],
+    Map<String, OwnerContact> authorizedContacts = const {},
+  }) : _properties = List.of(properties),
+       _authorizedContacts = Map.of(authorizedContacts);
 
   final List<Property> _properties;
+  final Map<String, OwnerContact> _authorizedContacts;
   final Set<String> _savedPropertyIds = {};
 
   @override
@@ -565,51 +477,6 @@ class MockPropertyRepository implements PropertyRepository {
     }
   }
 
-  static List<Property> _seedWithOwnership() {
-    final seeded = _base
-        .map(
-          (property) => property.copyWith(
-            agentId: property.businessModel == PropertyBusinessModel.bookable
-                ? kStayAgentId
-                : kRentalAgentId,
-          ),
-        )
-        .toList();
-    // A listing submitted for review, hidden from customers until approved.
-    seeded.add(
-      const Property(
-        id: 'rent-04',
-        name: 'Ubungo One-Room Studio',
-        city: 'Dar es Salaam',
-        neighborhood: 'Ubungo',
-        priceTzs: 220000,
-        businessModel: PropertyBusinessModel.contactUnlock,
-        category: PropertyCategory.room,
-        imageUrl:
-            'https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?w=1200&auto=format&fit=crop',
-        rating: 0,
-        reviewCount: 0,
-        bedrooms: 1,
-        bathrooms: 1,
-        amenities: ['Water', 'Electricity'],
-        description:
-            'A neat one-room studio near Ubungo junction, suitable for a single occupant.',
-        available: true,
-        furnished: false,
-        parking: false,
-        water: true,
-        electricity: true,
-        security: false,
-        propertyVerification: VerificationStatus.unverified,
-        ownerVerification: VerificationStatus.unverified,
-        managerName: 'Haven Link agent',
-        agentId: kRentalAgentId,
-        listingStatus: ListingStatus.pendingReview,
-      ),
-    );
-    return seeded;
-  }
-
   @override
   Future<List<Property>> getProperties() async =>
       List.unmodifiable(List.of(_properties));
@@ -619,7 +486,11 @@ class MockPropertyRepository implements PropertyRepository {
       _authorizedContacts[propertyId];
 
   @override
-  Future<Property> save(Property property) async {
+  Future<Property> save(
+    Property property, {
+    bool confirmInventoryModelChange = false,
+    bool saveAsDraft = false,
+  }) async {
     final index = _properties.indexWhere((item) => item.id == property.id);
     if (index == -1) {
       _properties.add(property);
@@ -649,4 +520,12 @@ class MockPropertyRepository implements PropertyRepository {
       reportedCount: _properties[index].reportedCount + 1,
     );
   }
+
+  @override
+  Future<List<String>> uploadPhotos(
+    List<({String name, List<int> bytes})> files,
+  ) async => throw StateError('Photo upload needs a configured backend.');
 }
+
+double? _asDouble(Object? value) =>
+    value is num ? value.toDouble() : double.tryParse('$value');

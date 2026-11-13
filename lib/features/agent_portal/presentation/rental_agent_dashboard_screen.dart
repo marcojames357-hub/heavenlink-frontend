@@ -1,17 +1,28 @@
 import 'package:flutter/material.dart';
+import 'package:haven_link/core/theme/haven_icons.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../../core/localization/app_strings.dart';
 import '../../../core/formatters/currency_formatter.dart';
+import '../../../core/config/env_config.dart';
 import '../../../core/state/haven_link_store.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/portal_sidebar.dart';
+import '../../../core/widgets/portal_scaffold.dart';
+import '../../account/domain/account_models.dart';
+import '../../account/data/customer_data_repository.dart';
+import '../../account/presentation/rental_messages_screen.dart';
 import '../../properties/domain/property.dart';
 import '../../properties/presentation/widgets/property_card.dart';
-import '../domain/agent_models.dart';
+import '../../financial_management/presentation/financial_management_screen.dart';
+import 'agent_dashboard_overview.dart';
+import '../../notifications/presentation/notification_center_screen.dart';
 import 'listing_editor_dialog.dart';
 import '../state/agent_portal_store.dart';
 
 /// Dashboard for rental property agents.
 ///
-/// Shows their listings, unlock activity, inquiries, and lets them
+/// Shows their listings and unlock activity, and lets them
 /// create/edit/remove properties.
 class RentalAgentDashboardScreen extends StatefulWidget {
   const RentalAgentDashboardScreen({
@@ -31,54 +42,243 @@ class RentalAgentDashboardScreen extends StatefulWidget {
 class _RentalAgentDashboardScreenState
     extends State<RentalAgentDashboardScreen> {
   @override
+  void initState() {
+    super.initState();
+    widget.store.addListener(_onDataChanged);
+    widget.agentStore.addListener(_onDataChanged);
+    _loadUnlockActivity();
+  }
+
+  @override
+  void didUpdateWidget(covariant RentalAgentDashboardScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      oldWidget.store
+        ..removeListener(_onDataChanged)
+        ..addListener(_onDataChanged);
+    }
+    if (oldWidget.agentStore != widget.agentStore) {
+      oldWidget.agentStore
+        ..removeListener(_onDataChanged)
+        ..addListener(_onDataChanged);
+      _loadUnlockActivity();
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.store.removeListener(_onDataChanged);
+    widget.agentStore.removeListener(_onDataChanged);
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     if (!widget.agentStore.isAuthorized) {
       return _UnauthorizedView();
     }
 
     return DefaultTabController(
-      length: 4,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Rental Agent Portal'),
-          bottom: const TabBar(
-            isScrollable: true,
-            tabs: [
-              Tab(text: 'My Listings'),
-              Tab(text: 'Unlock Activity'),
-              Tab(text: 'Inquiries'),
-              Tab(text: 'Profile'),
-            ],
-          ),
-        ),
-        body: Column(
-          children: [
-            if (widget.agentStore.publishBlockedReason != null)
-              _PublishBlockedBanner(
-                reason: widget.agentStore.publishBlockedReason!,
-              ),
-            Expanded(
-              child: TabBarView(
-                children: [
-                  _ListingsTab(
-                    store: widget.store,
-                    agentStore: widget.agentStore,
+      length: 6,
+      child: Builder(
+        builder: (context) {
+          final tabs = DefaultTabController.of(context);
+          final showSidebar = MediaQuery.sizeOf(context).width >= 980;
+          final labels = [
+            context.tr('Dashboard'),
+            context.tr('My Listings'),
+            context.tr('Unlock Activity'),
+            context.tr('Messages'),
+            context.tr('Profile'),
+            context.tr('Financial Management'),
+          ];
+          const icons = [
+            LucideIcons.layoutDashboard,
+            LucideIcons.building2,
+            LucideIcons.history,
+            LucideIcons.notebookPen,
+            LucideIcons.userRound,
+            LucideIcons.wallet,
+          ];
+
+          return AnimatedBuilder(
+            animation: tabs,
+            builder: (context, _) => HavenPortalScaffold(
+              showSidebar: showSidebar,
+              sidebar: _buildSidebar(context, tabs, labels, icons, false),
+              appBar: AppBar(
+                automaticallyImplyLeading: !showSidebar,
+                title: showSidebar
+                    ? PortalHeaderTitle(
+                        title: labels[tabs.index],
+                        destinations: labels,
+                        onDestination: tabs.animateTo,
+                      )
+                    : Text(context.tr('Rental Agent Portal')),
+                actions: [
+                  PortalAvatar(name: widget.store.currentUser?.fullName ?? ''),
+                  NotificationBellButton(
+                    tokenProvider: () =>
+                        widget.store.authenticationRepository.accessToken,
                   ),
-                  _UnlockActivityTab(agentStore: widget.agentStore),
-                  _InquiriesTab(agentStore: widget.agentStore),
-                  _ProfileTab(agentStore: widget.agentStore),
+                  IconButton(
+                    tooltip: context.tr('Sign out'),
+                    onPressed: () {
+                      widget.store.signOut();
+                      Navigator.of(context).pop();
+                    },
+                    icon: const Icon(LucideIcons.logOut),
+                  ),
+                ],
+                bottom: showSidebar
+                    ? null
+                    : TabBar(
+                        isScrollable: true,
+                        tabs: [
+                          for (var index = 0; index < labels.length; index++)
+                            Tab(text: labels[index]),
+                        ],
+                      ),
+              ),
+              drawer: showSidebar
+                  ? null
+                  : Drawer(
+                      child: _buildSidebar(context, tabs, labels, icons, true),
+                    ),
+              body: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      children: [
+                        if (widget.agentStore.publishBlockedReason != null)
+                          _PublishBlockedBanner(
+                            reason: widget.agentStore.publishBlockedReason!,
+                          ),
+                        Expanded(
+                          child: TabBarView(
+                            children: [
+                              Builder(
+                                builder: (tabContext) => AgentDashboardOverview(
+                                  agentStore: widget.agentStore,
+                                  isRental: true,
+                                  onAddProperty: () =>
+                                      _showAddPropertyDialog(context),
+                                  onOpenTab: (index) => DefaultTabController.of(
+                                    tabContext,
+                                  ).animateTo(index),
+                                ),
+                              ),
+                              _ListingsTab(
+                                store: widget.store,
+                                agentStore: widget.agentStore,
+                              ),
+                              _UnlockActivityTab(agentStore: widget.agentStore),
+                              RentalMessagesScreen(
+                                repository: CustomerDataRepository(
+                                  tokenProvider: () => widget
+                                      .store
+                                      .authenticationRepository
+                                      .accessToken,
+                                ),
+                                currentUserId:
+                                    widget.store.currentUser?.id ?? '',
+                                isAgent: true,
+                              ),
+                              _ProfileTab(agentStore: widget.agentStore),
+                              FinancialManagementScreen(
+                                businessModel:
+                                    PropertyBusinessModel.contactUnlock,
+                                properties: widget.agentStore.myListings,
+                                tokenProvider: () => widget
+                                    .store
+                                    .authenticationRepository
+                                    .accessToken,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
+              floatingActionButton: tabs.index == 1
+                  ? FloatingActionButton.extended(
+                      onPressed: () => _showAddPropertyDialog(context),
+                      icon: const Icon(LucideIcons.plus),
+                      label: Text(context.tr('Add Property')),
+                    )
+                  : null,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildSidebar(
+    BuildContext context,
+    TabController tabs,
+    List<String> labels,
+    List<IconData> icons,
+    bool closeOnSelect,
+  ) {
+    return Material(
+      color: HavenTheme.white,
+      child: SafeArea(
+        child: ListView(
+          key: const Key('portal-sidebar'),
+          padding: const EdgeInsets.all(20),
+          children: [
+            PortalSidebarHeading(workspace: context.tr('Rental Agent Portal')),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: FilledButton.icon(
+                onPressed: () {
+                  if (closeOnSelect) Navigator.of(context).pop();
+                  _showAddPropertyDialog(context);
+                },
+                icon: const Icon(LucideIcons.plus, size: 18),
+                label: Text(context.tr('Add Property')),
+              ),
+            ),
+            const SizedBox(height: 12),
+            for (var index = 0; index < labels.length; index++)
+              PortalSidebarItem(
+                icon: icons[index],
+                label: labels[index],
+                selected: tabs.index == index,
+                onTap: () {
+                  tabs.animateTo(index);
+                  if (closeOnSelect) Navigator.of(context).pop();
+                },
+              ),
+            TextButton.icon(
+              onPressed: () {
+                if (closeOnSelect) Navigator.of(context).pop();
+                Navigator.of(this.context).pop();
+              },
+              icon: const Icon(HavenIcons.chevronLeft, size: 16),
+              label: Text(context.tr('Back to marketplace')),
             ),
           ],
         ),
-        floatingActionButton: FloatingActionButton.extended(
-          onPressed: () => _showAddPropertyDialog(context),
-          icon: const Icon(Icons.add),
-          label: const Text('Add Property'),
-        ),
       ),
     );
+  }
+
+  void _onDataChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _loadUnlockActivity() {
+    widget.agentStore.loadUnlockActivity().catchError((Object error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    });
   }
 
   void _showAddPropertyDialog(BuildContext context) {
@@ -104,7 +304,7 @@ class _UnauthorizedView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Rental Agent Portal')),
+      appBar: AppBar(title: Text(context.tr('Rental Agent Portal'))),
       body: Center(
         child: Card(
           child: Padding(
@@ -113,18 +313,20 @@ class _UnauthorizedView extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Icon(
-                  Icons.lock_outlined,
+                  HavenIcons.lockOutlined,
                   size: 48,
                   color: HavenTheme.muted,
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  'Access Restricted',
+                  context.tr('Access Restricted'),
                   style: Theme.of(context).textTheme.headlineMedium,
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  'You do not have permission to access the rental agent portal.',
+                Text(
+                  context.tr(
+                    'You do not have permission to access the rental agent portal.',
+                  ),
                   textAlign: TextAlign.center,
                 ),
               ],
@@ -148,7 +350,7 @@ class _PublishBlockedBanner extends StatelessWidget {
       color: Colors.orange.shade100,
       child: Row(
         children: [
-          const Icon(Icons.warning, color: Colors.orange),
+          const Icon(HavenIcons.warning, color: Colors.orange),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -177,15 +379,21 @@ class _ListingsTab extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.home_work_outlined, size: 48, color: HavenTheme.muted),
+            Icon(
+              HavenIcons.homeWorkOutlined,
+              size: 48,
+              color: HavenTheme.muted,
+            ),
             const SizedBox(height: 16),
             Text(
-              'No listings yet',
+              context.tr('No listings yet'),
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Create your first rental property listing to get started.',
+            Text(
+              context.tr(
+                'Create your first rental property listing to get started.',
+              ),
             ),
           ],
         ),
@@ -233,19 +441,19 @@ class _ListingCard extends StatelessWidget {
                 _StatusChip(status: property.listingStatus),
                 const Spacer(),
                 IconButton(
-                  icon: const Icon(Icons.edit),
+                  icon: const Icon(HavenIcons.edit),
                   onPressed: () => showListingEditorDialog(
                     context: context,
                     store: store,
                     businessModel: PropertyBusinessModel.contactUnlock,
                     initial: property,
                   ),
-                  tooltip: 'Edit listing',
+                  tooltip: context.tr('Edit listing'),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.delete),
+                  icon: const Icon(HavenIcons.delete),
                   onPressed: () => _showDeleteDialog(context, property),
-                  tooltip: 'Delete listing',
+                  tooltip: context.tr('Delete listing'),
                 ),
               ],
             ),
@@ -298,29 +506,29 @@ class _StatusChip extends StatelessWidget {
     switch (status) {
       case ListingStatus.published:
         color = Colors.green;
-        icon = Icons.check_circle;
+        icon = HavenIcons.checkCircle;
         break;
       case ListingStatus.pendingReview:
         color = Colors.orange;
-        icon = Icons.pending;
+        icon = HavenIcons.pending;
         break;
       case ListingStatus.paused:
         color = Colors.grey;
-        icon = Icons.pause_circle;
+        icon = HavenIcons.pauseCircle;
         break;
       case ListingStatus.rejected:
         color = Colors.red;
-        icon = Icons.cancel;
+        icon = HavenIcons.cancel;
         break;
       default:
         color = Colors.blue;
-        icon = Icons.drafts;
+        icon = HavenIcons.drafts;
     }
 
     return Chip(
       avatar: Icon(icon, size: 16, color: color),
       label: Text(status.label),
-      backgroundColor: color.withOpacity(0.1),
+      backgroundColor: color.withValues(alpha: 0.1),
     );
   }
 }
@@ -339,7 +547,7 @@ class _UnlockActivityTab extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.key_outlined, size: 48, color: HavenTheme.muted),
+            Icon(HavenIcons.keyOutlined, size: 48, color: HavenTheme.muted),
             const SizedBox(height: 16),
             Text(
               'No unlock activity yet',
@@ -362,7 +570,7 @@ class _UnlockActivityTab extends StatelessWidget {
         final item = activity[index];
         return Card(
           child: ListTile(
-            leading: const CircleAvatar(child: Icon(Icons.lock_open)),
+            leading: const CircleAvatar(child: Icon(HavenIcons.lockOpen)),
             title: Text(item.listingName),
             subtitle: Text('Unlocked ${_date(item.record.createdAt)}'),
             trailing: Text(formatTzs(item.record.amountTzs ?? 0)),
@@ -373,132 +581,73 @@ class _UnlockActivityTab extends StatelessWidget {
   }
 }
 
-class _InquiriesTab extends StatelessWidget {
-  const _InquiriesTab({required this.agentStore});
-
-  final AgentPortalStore agentStore;
-
-  @override
-  Widget build(BuildContext context) {
-    final inquiries = agentStore.inquiries;
-
-    if (inquiries.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.chat_bubble_outline, size: 48, color: HavenTheme.muted),
-            const SizedBox(height: 16),
-            Text(
-              'No inquiries yet',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Customer questions about your listings will appear here.',
-            ),
-          ],
-        ),
-      );
-    }
-
-    return ListView.separated(
-      padding: const EdgeInsets.all(16),
-      itemCount: inquiries.length,
-      separatorBuilder: (context, index) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        final inquiry = inquiries[index];
-        return Card(
-          child: ListTile(
-            leading: const CircleAvatar(child: Icon(Icons.question_answer)),
-            title: Text(inquiry.customerName),
-            subtitle: Text(inquiry.message),
-            trailing: _InquiryStatusChip(status: inquiry.status),
-            onTap: () => _showInquiryDialog(context, inquiry),
-          ),
-        );
-      },
-    );
-  }
-
-  void _showInquiryDialog(BuildContext context, ListingInquiry inquiry) {
-    showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Inquiry from ${inquiry.customerName}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(inquiry.message),
-            const SizedBox(height: 16),
-            if (inquiry.response != null) ...[
-              const Text(
-                'Your response:',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 4),
-              Text(inquiry.response!),
-            ],
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-          if (inquiry.status == InquiryStatus.open)
-            TextButton(
-              onPressed: () {
-                // TODO: Show response form
-                Navigator.pop(context);
-              },
-              child: const Text('Respond'),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _InquiryStatusChip extends StatelessWidget {
-  const _InquiryStatusChip({required this.status});
-
-  final InquiryStatus status;
-
-  @override
-  Widget build(BuildContext context) {
-    Color color;
-    switch (status) {
-      case InquiryStatus.open:
-        color = Colors.blue;
-        break;
-      case InquiryStatus.answered:
-        color = Colors.green;
-        break;
-      case InquiryStatus.closed:
-        color = Colors.grey;
-        break;
-    }
-
-    return Chip(
-      label: Text(status.name),
-      backgroundColor: color.withOpacity(0.1),
-    );
-  }
-}
-
-class _ProfileTab extends StatelessWidget {
+class _ProfileTab extends StatefulWidget {
   const _ProfileTab({required this.agentStore});
 
   final AgentPortalStore agentStore;
 
   @override
+  State<_ProfileTab> createState() => _ProfileTabState();
+}
+
+class _ProfileTabState extends State<_ProfileTab> {
+  late final TextEditingController _displayNameController;
+  late final TextEditingController _agencyNameController;
+  late final TextEditingController _bioController;
+  late final TextEditingController _photoUrlController;
+  late final TextEditingController _videoUrlController;
+  bool _savingProfile = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final agent = widget.agentStore.agent;
+    _displayNameController = TextEditingController(text: agent?.fullName ?? '');
+    _agencyNameController = TextEditingController(text: '');
+    _bioController = TextEditingController(text: '');
+    _photoUrlController = TextEditingController(text: '');
+    _videoUrlController = TextEditingController(text: '');
+    _loadProfile();
+  }
+
+  Future<void> _loadProfile() async {
+    try {
+      final profile = await widget.agentStore.loadProfile();
+      if (!mounted) return;
+      setState(() {
+        _displayNameController.text = profile.displayName;
+        _agencyNameController.text = profile.agencyName;
+        _bioController.text = profile.bio;
+        _photoUrlController.text = profile.photoUrl;
+        _videoUrlController.text = profile.videoUrl;
+      });
+    } catch (error) {
+      if (!mounted || !EnvConfig.backendConfigured) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
+  @override
+  void dispose() {
+    _displayNameController.dispose();
+    _agencyNameController.dispose();
+    _bioController.dispose();
+    _photoUrlController.dispose();
+    _videoUrlController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final agent = agentStore.agent;
+    final agent = widget.agentStore.agent;
     if (agent == null) {
       return const Center(child: CircularProgressIndicator());
     }
+
+    final photoUrl = _photoUrlController.text.trim();
+    final videoUrl = _videoUrlController.text.trim();
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -508,19 +657,135 @@ class _ProfileTab extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              CircleAvatar(
-                radius: 40,
-                child: Text(agent.fullName[0].toUpperCase()),
+              Row(
+                children: [
+                  if (photoUrl.isNotEmpty)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(40),
+                      child: Image.network(
+                        photoUrl,
+                        width: 80,
+                        height: 80,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) =>
+                            CircleAvatar(
+                              radius: 40,
+                              child: Text(agent.fullName[0].toUpperCase()),
+                            ),
+                      ),
+                    )
+                  else
+                    CircleAvatar(
+                      radius: 40,
+                      child: Text(agent.fullName[0].toUpperCase()),
+                    ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _displayNameController.text.isEmpty
+                              ? agent.fullName
+                              : _displayNameController.text,
+                          style: Theme.of(context).textTheme.headlineMedium,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(agent.email),
+                        const SizedBox(height: 6),
+                        Text(agent.phone),
+                      ],
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 16),
-              Text(
-                agent.fullName,
-                style: Theme.of(context).textTheme.headlineMedium,
+              const Divider(),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _displayNameController,
+                decoration: const InputDecoration(
+                  labelText: 'Display name',
+                  border: OutlineInputBorder(),
+                ),
               ),
-              const SizedBox(height: 8),
-              Text(agent.email),
-              const SizedBox(height: 8),
-              Text(agent.phone),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _agencyNameController,
+                decoration: const InputDecoration(
+                  labelText: 'Agency name',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _bioController,
+                maxLines: 4,
+                decoration: const InputDecoration(
+                  labelText: 'Bio / profile details',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _photoUrlController,
+                decoration: const InputDecoration(
+                  labelText: 'Photo upload URL',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _videoUrlController,
+                decoration: const InputDecoration(
+                  labelText: 'Video upload URL',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              if (photoUrl.isNotEmpty) ...[
+                const Text(
+                  'Photo preview',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image.network(
+                    photoUrl,
+                    height: 180,
+                    width: double.infinity,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) => Container(
+                      height: 180,
+                      color: Colors.grey.shade200,
+                      child: const Center(child: Text('Invalid photo URL')),
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 16),
+              if (videoUrl.isNotEmpty) ...[
+                const Text(
+                  'Video preview',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    color: Colors.grey.shade100,
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(HavenIcons.videocam, color: Colors.deepPurple),
+                      const SizedBox(width: 12),
+                      Expanded(child: Text(videoUrl)),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               const Divider(),
               const SizedBox(height: 16),
@@ -547,11 +812,66 @@ class _ProfileTab extends StatelessWidget {
                       .toList(),
                 ),
               ],
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _savingProfile ? null : _saveProfile,
+                  icon: _savingProfile
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(HavenIcons.saveAlt),
+                  label: Text(
+                    _savingProfile ? 'Saving profile' : 'Save profile details',
+                  ),
+                ),
+              ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  Future<void> _saveProfile() async {
+    final agent = widget.agentStore.agent;
+    if (agent == null) return;
+    setState(() => _savingProfile = true);
+    try {
+      await widget.agentStore.saveProfile(
+        AgentProfile(
+          userId: agent.id,
+          displayName: _displayNameController.text.trim(),
+          agencyName: _agencyNameController.text.trim(),
+          bio: _bioController.text.trim(),
+          phone: agent.phone,
+          email: agent.email,
+          photoUrl: _photoUrlController.text.trim(),
+          videoUrl: _videoUrlController.text.trim(),
+          role: agent.role,
+          capabilities: agent.capabilities,
+        ),
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            EnvConfig.backendConfigured
+                ? 'Agent profile saved.'
+                : 'Profile saved for this preview session.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+    } finally {
+      if (mounted) setState(() => _savingProfile = false);
+    }
   }
 }
 

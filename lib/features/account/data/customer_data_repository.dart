@@ -17,6 +17,8 @@ class CustomerDataRepository {
     required DateTime checkIn,
     required DateTime checkOut,
     required String guestName,
+    String? roomTypeId,
+    int guestCount = 1,
   }) => _request(
     'POST',
     '/api/v1/bookings',
@@ -26,7 +28,8 @@ class CustomerDataRepository {
       'checkIn': checkIn.toIso8601String(),
       'checkOut': checkOut.toIso8601String(),
       'guestName': guestName,
-      'guestCount': 1,
+      'guestCount': guestCount,
+      'roomTypeId': ?roomTypeId,
     },
   );
 
@@ -34,11 +37,79 @@ class CustomerDataRepository {
     await _request('POST', '/api/v1/bookings/$bookingId/cancel');
   }
 
+  Future<void> updateBookingStatus({
+    required String bookingId,
+    required String status,
+  }) async {
+    await _request(
+      'PATCH',
+      '/api/v1/bookings/$bookingId/status',
+      body: {'status': status},
+    );
+  }
+
   Future<List<Map<String, dynamic>>> loadBookings() async =>
       _list(await _request('GET', '/api/v1/bookings'), 'bookings');
 
+  Future<List<Map<String, dynamic>>> loadBookingMessages(
+    String bookingId,
+  ) async => _list(
+    await _request(
+      'GET',
+      '/api/v1/agents/messages/${Uri.encodeComponent(bookingId)}',
+    ),
+    'messages',
+  );
+
+  Future<void> sendBookingMessage({
+    required String bookingId,
+    required String body,
+  }) async {
+    await _request(
+      'POST',
+      '/api/v1/agents/messages',
+      body: {'bookingId': bookingId, 'body': body},
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> loadRentalConversations() async => _list(
+    await _request('GET', '/api/v1/agents/rental-conversations'),
+    'conversations',
+  );
+
+  Future<List<Map<String, dynamic>>> loadRentalMessages({
+    required String listingId,
+    required String customerId,
+  }) async => _list(
+    await _request(
+      'GET',
+      '/api/v1/agents/rental-messages/'
+          '${Uri.encodeComponent(listingId)}/${Uri.encodeComponent(customerId)}',
+    ),
+    'messages',
+  );
+
+  Future<void> sendRentalMessage({
+    required String listingId,
+    required String customerId,
+    required String body,
+  }) async {
+    await _request(
+      'POST',
+      '/api/v1/agents/rental-messages',
+      body: {'listingId': listingId, 'customerId': customerId, 'body': body},
+    );
+  }
+
   Future<List<Map<String, dynamic>>> loadUnlocks() async =>
       _list(await _request('GET', '/api/v1/payments/unlocks'), 'unlocks');
+
+  Future<void> openRentalDetails(String propertyId) async {
+    await _request(
+      'POST',
+      '/api/v1/properties/${Uri.encodeComponent(propertyId)}/open-details',
+    );
+  }
 
   Future<List<Map<String, dynamic>>> loadPaymentHistory() async =>
       _list(await _request('GET', '/api/v1/payments/history'), 'transactions');

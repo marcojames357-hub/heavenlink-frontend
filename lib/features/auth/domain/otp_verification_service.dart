@@ -30,8 +30,7 @@ class OtpChallenge {
   /// debug builds so nobody can mistake preview mode for delivery.
   final String? debugCode;
 
-  bool isExpired([DateTime? now]) =>
-      (now ?? DateTime.now()).isAfter(expiresAt);
+  bool isExpired([DateTime? now]) => (now ?? DateTime.now()).isAfter(expiresAt);
 
   bool canResend([DateTime? now]) =>
       (now ?? DateTime.now()).isAfter(resendAvailableAt) ||
@@ -63,7 +62,8 @@ class OtpNotConfiguredException extends OtpException {
 class OtpInvalidCodeException extends OtpException {
   const OtpInvalidCodeException({
     this.attemptsRemaining = 0,
-    super.message = 'That code is not correct. Check the message and try again.',
+    super.message =
+        'That code is not correct. Check the message and try again.',
   });
 
   final int attemptsRemaining;

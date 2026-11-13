@@ -95,6 +95,18 @@ const Booking = sequelize.define('Booking', {
     type: DataTypes.UUID,
     allowNull: true
   },
+  assignedRoomId: {
+    type: DataTypes.UUID,
+    allowNull: true
+  },
+  holdExpiresAt: {
+    type: DataTypes.DATE,
+    allowNull: true
+  },
+  checkedOutAt: {
+    type: DataTypes.DATE,
+    allowNull: true
+  },
   specialRequests: {
     type: DataTypes.TEXT,
     allowNull: true

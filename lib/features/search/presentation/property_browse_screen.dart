@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:haven_link/core/theme/haven_icons.dart';
 
+import '../../../core/localization/app_strings.dart';
 import '../../../core/formatters/currency_formatter.dart';
 import '../../../core/state/haven_link_store.dart';
 import '../../../core/theme/app_theme.dart';
@@ -11,12 +13,19 @@ class PropertyBrowseScreen extends StatefulWidget {
     required this.store,
     required this.businessModel,
     required this.onOpenProperty,
+    this.onOpenStay,
+    this.initialQuery = '',
+    this.initialCategory,
     super.key,
   });
 
+  final String initialQuery;
+  final String? initialCategory;
   final HavenLinkStore store;
   final PropertyBusinessModel businessModel;
   final ValueChanged<Property> onOpenProperty;
+  final void Function(Property property, DateTimeRange? dates, int guests)?
+  onOpenStay;
 
   @override
   State<PropertyBrowseScreen> createState() => _PropertyBrowseScreenState();
@@ -36,9 +45,8 @@ class _PropertyBrowseScreenState extends State<PropertyBrowseScreen> {
   bool _water = false;
   bool _electricity = false;
   bool _security = false;
-  RangeValues _priceRange = const RangeValues(100000, 2500000);
+  RangeValues _priceRange = const RangeValues(0, 2500000);
   final Set<String> _selectedAmenities = {};
-
   bool get _isBookable => businessModelIsBookable(widget.businessModel);
 
   List<Property> get _results {
@@ -52,7 +60,7 @@ class _PropertyBrowseScreenState extends State<PropertyBrowseScreen> {
               .contains(query);
       return matchesQuery &&
           (_city == null || property.city == _city) &&
-          (_category == null || property.category.name == _category) &&
+          _matchesCategory(property) &&
           (_bedrooms == null || property.bedrooms >= _bedrooms!) &&
           (_bathrooms == null || property.bathrooms >= _bathrooms!) &&
           property.priceTzs >= _priceRange.start &&
@@ -68,6 +76,24 @@ class _PropertyBrowseScreenState extends State<PropertyBrowseScreen> {
     }).toList();
   }
 
+  bool _matchesCategory(Property property) => switch (_category) {
+    null => true,
+    'apartment' =>
+      property.category == PropertyCategory.servicedApartment ||
+          property.category == PropertyCategory.shortStayApartment,
+    _ => property.category.name == _category,
+  };
+
+  bool get _hasStayTypes => _isBookable;
+
+  @override
+  void initState() {
+    super.initState();
+    _query = widget.initialQuery;
+    _queryController.text = _query;
+    _category = widget.initialCategory;
+  }
+
   @override
   void dispose() {
     _queryController.dispose();
@@ -76,16 +102,18 @@ class _PropertyBrowseScreenState extends State<PropertyBrowseScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final title = _isBookable ? 'Stays to book' : 'Homes to rent';
+    final title = context.tr(_isBookable ? 'Stays to book' : 'Homes to rent');
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 30),
       children: [
         Text(title, style: Theme.of(context).textTheme.headlineLarge),
         const SizedBox(height: 5),
         Text(
-          _isBookable
-              ? 'Choose dates and book your stay directly with Haven Link.'
-              : 'Compare homes. Exact address and verified contact unlock after payment.',
+          context.tr(
+            _isBookable
+                ? 'Browse places to stay and book directly with Haven Link.'
+                : 'Compare homes. Exact address and verified contact unlock after payment.',
+          ),
           style: const TextStyle(color: HavenTheme.muted),
         ),
         const SizedBox(height: 18),
@@ -96,29 +124,54 @@ class _PropertyBrowseScreenState extends State<PropertyBrowseScreen> {
                 controller: _queryController,
                 onChanged: (value) => setState(() => _query = value),
                 decoration: InputDecoration(
-                  hintText: 'Location, property or amenity',
-                  prefixIcon: const Icon(Icons.search),
+                  hintText: context.tr('Location, property or amenity'),
+                  prefixIcon: const Icon(HavenIcons.search),
                   suffixIcon: _query.isEmpty
                       ? null
                       : IconButton(
-                          tooltip: 'Clear search',
+                          tooltip: context.tr('Clear search'),
                           onPressed: () {
                             _queryController.clear();
                             setState(() => _query = '');
                           },
-                          icon: const Icon(Icons.close),
+                          icon: const Icon(HavenIcons.close),
                         ),
                 ),
               ),
             ),
             const SizedBox(width: 10),
             IconButton.filledTonal(
-              tooltip: 'Filters',
+              tooltip: context.tr('Filters'),
               onPressed: _showFilters,
-              icon: const Icon(Icons.tune),
+              icon: const Icon(HavenIcons.tune),
             ),
           ],
         ),
+        const SizedBox(height: 14),
+        if (_hasStayTypes) ...[
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final (label, value) in const [
+                  ('All stays', null),
+                  ('Hotels', 'hotel'),
+                  ('Motels', 'motel'),
+                  ('Lodges', 'lodge'),
+                  ('Apartments', 'apartment'),
+                ])
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: Text(label),
+                      selected: _category == value,
+                      onSelected: (_) => setState(() => _category = value),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
         const SizedBox(height: 14),
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
@@ -148,11 +201,15 @@ class _PropertyBrowseScreenState extends State<PropertyBrowseScreen> {
         const SizedBox(height: 18),
         Row(
           children: [
-            Expanded(child: Text('${_results.length} properties found')),
+            Expanded(
+              child: Text(
+                '${_results.length} ${context.tr(_results.length == 1 ? 'property found' : 'properties found')}',
+              ),
+            ),
             TextButton.icon(
               onPressed: () => setState(_clearFilters),
-              icon: const Icon(Icons.restart_alt, size: 17),
-              label: const Text('Reset'),
+              icon: const Icon(HavenIcons.restartAlt, size: 17),
+              label: Text(context.tr('Reset')),
             ),
           ],
         ),
@@ -161,14 +218,18 @@ class _PropertyBrowseScreenState extends State<PropertyBrowseScreen> {
             padding: const EdgeInsets.only(top: 48),
             child: Column(
               children: [
-                const Icon(Icons.search_off, size: 48, color: HavenTheme.muted),
+                const Icon(
+                  HavenIcons.searchOff,
+                  size: 48,
+                  color: HavenTheme.muted,
+                ),
                 const SizedBox(height: 12),
                 Text(
-                  'No properties found',
+                  context.tr('No properties found'),
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
                 const SizedBox(height: 5),
-                const Text('Try a broader location or remove a filter.'),
+                Text(context.tr('Try a broader location or remove a filter.')),
               ],
             ),
           )
@@ -193,7 +254,19 @@ class _PropertyBrowseScreenState extends State<PropertyBrowseScreen> {
                 itemBuilder: (context, index) => PropertyCard(
                   property: _results[index],
                   store: widget.store,
-                  onTap: () => widget.onOpenProperty(_results[index]),
+                  onTap: () {
+                    final property = _results[index];
+                    if (widget.onOpenStay != null &&
+                        const {
+                          PropertyCategory.hotel,
+                          PropertyCategory.motel,
+                          PropertyCategory.lodge,
+                        }.contains(property.category)) {
+                      widget.onOpenStay!(property, null, 2);
+                    } else {
+                      widget.onOpenProperty(property);
+                    }
+                  },
                 ),
               );
             },
@@ -215,13 +288,14 @@ class _PropertyBrowseScreenState extends State<PropertyBrowseScreen> {
               padding: const EdgeInsets.fromLTRB(22, 4, 22, 24),
               children: [
                 Text(
-                  'Filter properties',
+                  context.tr('Filter properties'),
                   style: Theme.of(context).textTheme.headlineMedium,
                 ),
                 const SizedBox(height: 20),
                 DropdownButtonFormField<String>(
+                  isExpanded: true,
                   initialValue: _city,
-                  decoration: const InputDecoration(labelText: 'City'),
+                  decoration: InputDecoration(labelText: context.tr('City')),
                   items:
                       const [
                             'Dar es Salaam',
@@ -241,8 +315,11 @@ class _PropertyBrowseScreenState extends State<PropertyBrowseScreen> {
                 ),
                 const SizedBox(height: 16),
                 DropdownButtonFormField<String>(
+                  isExpanded: true,
                   initialValue: _category,
-                  decoration: const InputDecoration(labelText: 'Property type'),
+                  decoration: InputDecoration(
+                    labelText: context.tr('Property type'),
+                  ),
                   items: _categories
                       .map(
                         (category) => DropdownMenuItem(
@@ -255,11 +332,11 @@ class _PropertyBrowseScreenState extends State<PropertyBrowseScreen> {
                 ),
                 const SizedBox(height: 18),
                 Text(
-                  'Price range: ${formatTzs(_priceRange.start.round())} – ${formatTzs(_priceRange.end.round())}',
+                  '${context.tr('Price range')}: ${formatTzs(_priceRange.start.round())} – ${formatTzs(_priceRange.end.round())}',
                 ),
                 RangeSlider(
                   values: _priceRange,
-                  min: 100000,
+                  min: 0,
                   max: _isBookable ? 2500000 : 3000000,
                   divisions: 24,
                   labels: RangeLabels(
@@ -271,7 +348,7 @@ class _PropertyBrowseScreenState extends State<PropertyBrowseScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Minimum bedrooms',
+                  context.tr('Minimum bedrooms'),
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 Wrap(
@@ -279,7 +356,7 @@ class _PropertyBrowseScreenState extends State<PropertyBrowseScreen> {
                   children: [null, 1, 2, 3, 4]
                       .map(
                         (beds) => ChoiceChip(
-                          label: Text(beds?.toString() ?? 'Any'),
+                          label: Text(beds?.toString() ?? context.tr('Any')),
                           selected: beds == _bedrooms,
                           onSelected: (_) =>
                               setSheetState(() => _bedrooms = beds),
@@ -289,7 +366,7 @@ class _PropertyBrowseScreenState extends State<PropertyBrowseScreen> {
                 ),
                 const SizedBox(height: 14),
                 Text(
-                  'Minimum bathrooms',
+                  context.tr('Minimum bathrooms'),
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 Wrap(
@@ -297,7 +374,7 @@ class _PropertyBrowseScreenState extends State<PropertyBrowseScreen> {
                   children: [null, 1, 2, 3]
                       .map(
                         (baths) => ChoiceChip(
-                          label: Text(baths?.toString() ?? 'Any'),
+                          label: Text(baths?.toString() ?? context.tr('Any')),
                           selected: baths == _bathrooms,
                           onSelected: (_) =>
                               setSheetState(() => _bathrooms = baths),
@@ -307,7 +384,7 @@ class _PropertyBrowseScreenState extends State<PropertyBrowseScreen> {
                 ),
                 const SizedBox(height: 14),
                 Text(
-                  'Amenities',
+                  context.tr('Amenities'),
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 Wrap(
@@ -332,14 +409,14 @@ class _PropertyBrowseScreenState extends State<PropertyBrowseScreen> {
                 const SizedBox(height: 12),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Verified property and owner'),
+                  title: Text(context.tr('Verified property and owner')),
                   value: _verifiedOnly,
                   onChanged: (value) =>
                       setSheetState(() => _verifiedOnly = value),
                 ),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Available now'),
+                  title: Text(context.tr('Available now')),
                   value: _availableOnly,
                   onChanged: (value) =>
                       setSheetState(() => _availableOnly = value),
@@ -347,33 +424,33 @@ class _PropertyBrowseScreenState extends State<PropertyBrowseScreen> {
                 if (!_isBookable) ...[
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('Furnished'),
+                    title: Text(context.tr('Furnished')),
                     value: _furnished == true,
                     onChanged: (value) =>
                         setSheetState(() => _furnished = value ? true : null),
                   ),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('Parking'),
+                    title: Text(context.tr('Parking')),
                     value: _parking,
                     onChanged: (value) => setSheetState(() => _parking = value),
                   ),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('Water available'),
+                    title: Text(context.tr('Water available')),
                     value: _water,
                     onChanged: (value) => setSheetState(() => _water = value),
                   ),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('Electricity'),
+                    title: Text(context.tr('Electricity')),
                     value: _electricity,
                     onChanged: (value) =>
                         setSheetState(() => _electricity = value),
                   ),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('Security'),
+                    title: Text(context.tr('Security')),
                     value: _security,
                     onChanged: (value) =>
                         setSheetState(() => _security = value),
@@ -385,7 +462,7 @@ class _PropertyBrowseScreenState extends State<PropertyBrowseScreen> {
                     Navigator.pop(context);
                     setState(() {});
                   },
-                  child: const Text('Show matching properties'),
+                  child: Text(context.tr('Show matching properties')),
                 ),
               ],
             ),
@@ -419,7 +496,7 @@ class _PropertyBrowseScreenState extends State<PropertyBrowseScreen> {
     _water = false;
     _electricity = false;
     _security = false;
-    _priceRange = RangeValues(100000, _isBookable ? 2500000 : 3000000);
+    _priceRange = RangeValues(0, _isBookable ? 2500000 : 3000000);
     _bathrooms = null;
     _selectedAmenities.clear();
   }

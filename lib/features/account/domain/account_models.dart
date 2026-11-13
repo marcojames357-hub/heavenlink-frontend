@@ -42,6 +42,26 @@ enum AccountVerification { unverified, pending, verified }
 /// The services an agent account is allowed to operate.
 enum AgentCapability { rentalProperty, accommodationBooking }
 
+/// Management workspaces an agent can be granted. The server stores and
+/// enforces these; the client only mirrors what the session reports.
+enum AgentWorkspace {
+  rental('RENTAL', 'Long-Term Rentals'),
+  apartment('APARTMENT', 'Apartments / Short-Term Stays'),
+  hotel('HOTEL', 'Hotels, Lodges & Motels');
+
+  const AgentWorkspace(this.identifier, this.title);
+
+  final String identifier;
+  final String title;
+
+  static AgentWorkspace? fromIdentifier(String value) {
+    for (final item in values) {
+      if (item.identifier == value.toUpperCase()) return item;
+    }
+    return null;
+  }
+}
+
 class User {
   const User({
     required this.id,
@@ -53,11 +73,15 @@ class User {
     this.accountEnabled = true,
     this.isPreviewSession = false,
     this.capabilities = const {},
+    this.workspaces = const {},
   });
 
   final String id;
   final String fullName;
   final String email;
+
+  /// Active workspaces reported by the server.
+  final Set<AgentWorkspace> workspaces;
 
   /// Always stored in E.164 form, e.g. `+255754123456`.
   final String phone;
@@ -94,6 +118,7 @@ class User {
     bool? accountEnabled,
     bool? isPreviewSession,
     Set<AgentCapability>? capabilities,
+    Set<AgentWorkspace>? workspaces,
   }) {
     return User(
       id: id,
@@ -105,6 +130,7 @@ class User {
       accountEnabled: accountEnabled ?? this.accountEnabled,
       isPreviewSession: isPreviewSession ?? this.isPreviewSession,
       capabilities: capabilities ?? this.capabilities,
+      workspaces: workspaces ?? this.workspaces,
     );
   }
 }
@@ -119,6 +145,8 @@ class AgentProfile {
     this.bio = '',
     this.phone = '',
     this.email = '',
+    this.photoUrl = '',
+    this.videoUrl = '',
     this.capabilities = const {},
     this.serviceAreas = const [],
   });
@@ -130,6 +158,8 @@ class AgentProfile {
   final String bio;
   final String phone;
   final String email;
+  final String photoUrl;
+  final String videoUrl;
   final Set<AgentCapability> capabilities;
   final List<String> serviceAreas;
 
@@ -139,6 +169,8 @@ class AgentProfile {
     String? bio,
     String? phone,
     String? email,
+    String? photoUrl,
+    String? videoUrl,
     Set<AgentCapability>? capabilities,
     List<String>? serviceAreas,
   }) {
@@ -150,6 +182,8 @@ class AgentProfile {
       bio: bio ?? this.bio,
       phone: phone ?? this.phone,
       email: email ?? this.email,
+      photoUrl: photoUrl ?? this.photoUrl,
+      videoUrl: videoUrl ?? this.videoUrl,
       capabilities: capabilities ?? this.capabilities,
       serviceAreas: serviceAreas ?? this.serviceAreas,
     );

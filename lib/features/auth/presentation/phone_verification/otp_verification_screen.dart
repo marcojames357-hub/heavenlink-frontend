@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:haven_link/core/theme/haven_icons.dart';
 import 'package:flutter/services.dart';
 
 import '../../../../core/config/env_config.dart';
+import '../../../../core/localization/app_strings.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../domain/otp_verification_service.dart';
 import '../../domain/phone_number.dart';
@@ -72,7 +74,9 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   }
 
   int _remainingSeconds(OtpChallenge challenge) {
-    final left = challenge.resendAvailableAt.difference(DateTime.now()).inSeconds;
+    final left = challenge.resendAvailableAt
+        .difference(DateTime.now())
+        .inSeconds;
     return left > 0 ? left : 0;
   }
 
@@ -90,7 +94,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Verify your phone')),
+      appBar: AppBar(title: Text(context.tr('Verify your phone'))),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(22),
@@ -103,20 +107,20 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     const Icon(
-                      Icons.sms_outlined,
+                      HavenIcons.smsOutlined,
                       color: HavenTheme.teal,
                       size: 42,
                     ),
                     const SizedBox(height: 14),
                     Text(
-                      'Enter the 6-digit code',
+                      context.tr('Enter the 6-digit code'),
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.headlineMedium,
                     ),
                     const SizedBox(height: 8),
                     Text.rich(
                       TextSpan(
-                        text: 'We sent a code to ',
+                        text: context.tr('We sent a code to '),
                         children: [
                           TextSpan(
                             text: _displayPhone,
@@ -133,7 +137,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                     ),
                     TextButton(
                       onPressed: _verifying ? null : widget.onEditPhone,
-                      child: const Text('Not your number? Change it'),
+                      child: Text(context.tr('Not your number? Change it')),
                     ),
                     if (_previewMode) ...[
                       const SizedBox(height: 4),
@@ -151,8 +155,8 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                         FilteringTextInputFormatter.digitsOnly,
                         LengthLimitingTextInputFormatter(_codeLength),
                       ],
-                      decoration: const InputDecoration(
-                        labelText: 'Verification code',
+                      decoration: InputDecoration(
+                        labelText: context.tr('Verification code'),
                         hintText: '123456',
                         counterText: '',
                       ),
@@ -183,20 +187,20 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                                 color: Colors.white,
                               ),
                             )
-                          : const Icon(Icons.check_circle_outline),
+                          : const Icon(HavenIcons.checkCircleOutline),
                       label: Text(
                         _success
-                            ? 'Phone verified'
+                            ? context.tr('Phone verified')
                             : _verifying
-                            ? 'Verifying…'
-                            : 'Verify phone number',
+                            ? context.tr('Verifying…')
+                            : context.tr('Verify phone number'),
                       ),
                     ),
                     const SizedBox(height: 8),
                     _resendButton(),
                     const SizedBox(height: 6),
                     Text(
-                      'Provider: ${widget.service.providerLabel}',
+                      '${context.tr('Provider')}: ${widget.service.providerLabel}',
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         color: HavenTheme.muted,
@@ -216,7 +220,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   Widget _resendButton() {
     if (_secondsLeft > 0) {
       return Text(
-        'Resend available in ${_secondsLeft}s',
+        '${context.tr('Resend available in')} ${_secondsLeft}s',
         textAlign: TextAlign.center,
         style: const TextStyle(color: HavenTheme.muted),
       );
@@ -228,8 +232,8 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
               dimension: 14,
               child: CircularProgressIndicator(strokeWidth: 2),
             )
-          : const Icon(Icons.refresh, size: 17),
-      label: const Text('Resend code'),
+          : const Icon(HavenIcons.refresh, size: 17),
+      label: Text(context.tr('Resend code')),
     );
   }
 
@@ -263,7 +267,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _error = 'Could not resend the code. Try again shortly.';
+        _error = context.tr('Could not resend the code. Try again shortly.');
         _resending = false;
       });
     }
@@ -272,7 +276,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   Future<void> _verify() async {
     final code = _codeController.text.trim();
     if (code.length != _codeLength) {
-      setState(() => _error = 'Enter the full 6-digit code.');
+      setState(() => _error = context.tr('Enter the full 6-digit code.'));
       return;
     }
     setState(() {
@@ -304,7 +308,9 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       if (!mounted) return;
       setState(() {
         _verifying = false;
-        _error = 'Verification failed. Check your connection and try again.';
+        _error = context.tr(
+          'Verification failed. Check your connection and try again.',
+        );
       });
       _codeController.clear();
     }
@@ -329,9 +335,10 @@ class _PreviewCodeBanner extends StatelessWidget {
       ),
       child: Column(
         children: [
-          const Text(
-            'PREVIEW MODE — no SMS was sent. This code exists only on this '
-            'device and must never be used in production.',
+          Text(
+            context.tr(
+              'PREVIEW MODE — no SMS was sent. This code exists only on this device and must never be used in production.',
+            ),
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 12, height: 1.4),
           ),

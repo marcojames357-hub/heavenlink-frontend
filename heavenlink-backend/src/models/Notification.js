@@ -44,7 +44,15 @@ const Notification = sequelize.define('Notification', {
   actionLabel: {
     type: DataTypes.STRING,
     allowNull: true
-  }
+  },
+  type: { type: DataTypes.STRING(50), allowNull: true },
+  category: { type: DataTypes.STRING(30), allowNull: false, defaultValue: 'general' },
+  priority: { type: DataTypes.STRING(20), allowNull: false, defaultValue: 'normal' },
+  propertyId: { type: DataTypes.UUID, allowNull: true },
+  bookingId: { type: DataTypes.UUID, allowNull: true },
+  dedupeKey: { type: DataTypes.STRING(250), allowNull: true },
+  channels: { type: DataTypes.JSON, allowNull: true },
+  readAt: { type: DataTypes.DATE, allowNull: true }
 }, {
   timestamps: true,
   indexes: [

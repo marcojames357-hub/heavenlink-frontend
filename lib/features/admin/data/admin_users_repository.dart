@@ -74,6 +74,32 @@ class AdminUsersRepository {
     if (response.statusCode >= 400) _throwError(response);
   }
 
+  Future<Map<String, String>> loadWorkspaces(String userId) async {
+    final response = await _send(
+      'GET',
+      '/api/v1/workspaces/admin/${Uri.encodeComponent(userId)}',
+    );
+    final root = jsonDecode(response.body) as Map<String, dynamic>;
+    return {
+      for (final item
+          in (root['workspaces'] as List<dynamic>? ?? const [])
+              .whereType<Map<String, dynamic>>())
+        item['workspace'] as String: item['status'] as String,
+    };
+  }
+
+  Future<void> setWorkspaceStatus(
+    String userId,
+    String workspace,
+    String status,
+  ) async {
+    await _send(
+      'PATCH',
+      '/api/v1/workspaces/admin/${Uri.encodeComponent(userId)}/$workspace',
+      body: {'status': status},
+    );
+  }
+
   Future<http.Response> _send(
     String method,
     String path, {

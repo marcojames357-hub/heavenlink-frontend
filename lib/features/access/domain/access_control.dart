@@ -3,9 +3,9 @@ import '../../properties/domain/property.dart';
 
 /// The separate dashboards Haven Link exposes.
 enum Portal {
-  customer('Customer account', 'CUSTOMER'),
   rentalAgent('Rental Property Agent', 'RENTAL_AGENT'),
-  stayAgent('Stay Agent', 'STAY_AGENT'),
+  apartmentAgent('Apartment Stays Agent', 'APARTMENT_AGENT'),
+  stayAgent('Hotel, Lodge & Motel Agent', 'STAY_AGENT'),
   admin('Administrator', 'ADMIN');
 
   const Portal(this.title, this.identifier);
@@ -32,23 +32,42 @@ class AccessControl {
     if (user == null || !user.accountEnabled) return false;
 
     return switch (portal) {
-      Portal.customer => true,
       Portal.rentalAgent =>
         user.role == AccountRole.rentalAgent ||
             user.role == AccountRole.admin ||
             user.capabilities.contains(AgentCapability.rentalProperty),
-      Portal.stayAgent =>
-        user.role == AccountRole.stayAgent ||
-            user.role == AccountRole.admin ||
-            user.capabilities.contains(AgentCapability.accommodationBooking),
+      Portal.apartmentAgent => _hasStayWorkspace(
+        user,
+        AgentWorkspace.apartment,
+      ),
+      Portal.stayAgent => _hasStayWorkspace(user, AgentWorkspace.hotel),
       Portal.admin => user.role == AccountRole.admin,
     };
   }
 
+  /// Legacy sessions without workspace data fall back to the hotel portal
+  /// (the former combined stay portal); the backend still enforces the real
+  /// workspace on every request.
+  static bool _hasStayWorkspace(User user, AgentWorkspace workspace) {
+    if (user.role == AccountRole.admin) return true;
+    if (user.workspaces.isNotEmpty) return user.workspaces.contains(workspace);
+    // Legacy sessions only ever had the combined stay portal, now Hotel.
+    return workspace == AgentWorkspace.hotel &&
+        (user.role == AccountRole.stayAgent ||
+            user.capabilities.contains(AgentCapability.accommodationBooking));
+  }
+
+  /// Workspace a listing belongs to, or null for rentals.
+  static Portal? portalForCategory(PropertyCategory category) {
+    if (category.isApartmentStay) return Portal.apartmentAgent;
+    if (category.isHotelStay) return Portal.stayAgent;
+    return null;
+  }
+
   /// Role that [portal] belongs to, used for navigation and audit labels.
   static AccountRole roleFor(Portal portal) => switch (portal) {
-    Portal.customer => AccountRole.customer,
     Portal.rentalAgent => AccountRole.rentalAgent,
+    Portal.apartmentAgent => AccountRole.stayAgent,
     Portal.stayAgent => AccountRole.stayAgent,
     Portal.admin => AccountRole.admin,
   };
@@ -74,6 +93,18 @@ class AccessControl {
         user.role.canManageAccommodations ||
             user.capabilities.contains(AgentCapability.accommodationBooking),
     };
+  }
+
+  /// Publishing for a specific stay category, honouring workspaces.
+  static bool canPublishCategory(User? user, PropertyCategory category) {
+    final portal = portalForCategory(category);
+    if (portal == null) {
+      return canPublishListings(
+        user,
+        model: PropertyBusinessModel.contactUnlock,
+      );
+    }
+    return user != null && user.canPublish && canOpenPortal(user, portal);
   }
 
   /// Restricted action: managing a specific listing the user does not own.

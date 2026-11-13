@@ -1,7 +1,7 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const { Op } = require('sequelize');
-const { User, Property, Booking, PaymentTransaction, UnlockRecord, Notification, BusinessConfiguration, AdminAuditEvent } = require('../models');
+const { User, Property, Booking, PaymentTransaction, UnlockRecord, Notification, BusinessConfiguration, AdminAuditEvent, Review, ReviewReport, Room, RoomType, Floor, WalkInReservation, sequelize } = require('../models');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
@@ -32,6 +32,98 @@ const logAdminEvent = (req, action, entityType, entityId, metadata = {}) =>
     ipAddress: req.ip
   });
 
+router.get('/room-inventory', authenticateToken, requireRole('ADMIN'), async (req, res) => {
+  try {
+    const properties = await Property.findAll({
+      where: {
+        businessModel: 'bookable',
+        [Op.or]: [
+          { accommodationType: { [Op.in]: ['hotel', 'motel', 'lodge'] } },
+          { category: { [Op.in]: ['hotel', 'lodge'] } }
+        ]
+      },
+      attributes: ['id', 'name', 'category', 'accommodationType', 'listingStatus'],
+      order: [['name', 'ASC']]
+    });
+    const inventory = await Promise.all(properties.map(async (property) => {
+      const [rooms, bookings, walkIns] = await Promise.all([
+        Room.findAll({
+          where: { propertyId: property.id },
+          include: [
+            { model: RoomType, as: 'roomType', attributes: ['name'] },
+            { model: Floor, as: 'floor', attributes: ['label'] }
+          ],
+          order: [['roomNumber', 'ASC']]
+        }),
+        Booking.findAll({
+          where: {
+            propertyId: property.id,
+            status: { [Op.in]: ['pending', 'confirmed'] }
+          },
+          attributes: ['id', 'roomTypeId', 'assignedRoomId', 'checkIn', 'checkOut', 'status'],
+          include: [
+            { model: Room, as: 'assignedRoom', attributes: ['roomNumber'] }
+          ],
+          order: [['checkIn', 'ASC']]
+        }),
+        WalkInReservation.findAll({
+          where: { propertyId: property.id, status: { [Op.in]: ['reserved', 'checkedIn'] } },
+          attributes: ['id', 'guestName', 'checkIn', 'checkOut', 'status', 'paymentStatus', 'priceTzs'],
+          include: [
+            { model: RoomType, as: 'roomType', attributes: ['name'] },
+            { model: Room, as: 'room', attributes: ['roomNumber'] }
+          ],
+          order: [['checkIn', 'ASC']]
+        })
+      ]);
+      const typeNames = new Map((await RoomType.findAll({
+        where: { listingId: property.id }, attributes: ['id', 'name']
+      })).map((type) => [type.id, type.name]));
+      return {
+        property: {
+          id: property.id,
+          name: property.name,
+          category: property.accommodationType || property.category,
+          listingStatus: property.listingStatus
+        },
+        totalRooms: rooms.length,
+        walkIns: walkIns.map((stay) => ({
+          id: stay.id,
+          guestName: stay.guestName,
+          checkIn: stay.checkIn,
+          checkOut: stay.checkOut,
+          status: stay.status,
+          paymentStatus: stay.paymentStatus,
+          priceTzs: stay.priceTzs,
+          category: stay.roomType?.name ?? null,
+          room: stay.room?.roomNumber ?? null
+        })),
+        assignedRooms: rooms.filter((room) => room.roomTypeId != null).length,
+        outOfServiceRooms: rooms.filter((room) => room.status === 'outOfService').length,
+        rooms: rooms.map((room) => ({
+          id: room.id,
+          roomNumber: room.roomNumber,
+          floor: room.floor?.label ?? null,
+          category: room.roomType?.name ?? null,
+          status: room.status
+        })),
+        bookings: bookings.map((booking) => ({
+          id: booking.id,
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+          status: booking.status,
+          category: typeNames.get(booking.roomTypeId) ?? null,
+          assignedRoom: booking.assignedRoom?.roomNumber ?? null
+        }))
+      };
+    }));
+    res.json({ inventory });
+  } catch (error) {
+    console.error('Get admin room inventory error:', error);
+    res.status(500).json({ error: 'Failed to fetch room inventory' });
+  }
+});
+
 router.get('/audit-events', authenticateToken, requireRole('ADMIN'), async (req, res) => {
   try {
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 50, 1), 200);
@@ -47,11 +139,126 @@ router.get('/audit-events', authenticateToken, requireRole('ADMIN'), async (req,
   }
 });
 
+router.get('/reviews', authenticateToken, requireRole('ADMIN'), async (req, res) => {
+  try {
+    const page = Math.max(Number.parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 25, 1), 100);
+    const where = {};
+    if (['published', 'hidden', 'rejected'].includes(req.query.status)) {
+      where.status = req.query.status;
+    }
+    const reportWhere = req.query.reportedOnly === 'true' ? { status: 'pending' } : undefined;
+    if (req.query.propertyId) where.propertyId = String(req.query.propertyId);
+    const createdRange = {};
+    const from = new Date(req.query.from);
+    const to = new Date(req.query.to);
+    if (!Number.isNaN(from.getTime())) createdRange[Op.gte] = from;
+    if (!Number.isNaN(to.getTime())) createdRange[Op.lte] = new Date(to.getTime() + 86400000 - 1);
+    if (Reflect.ownKeys(createdRange).length) where.createdAt = createdRange;
+    const propertyWhere = req.query.agentId ? { agentId: String(req.query.agentId) } : undefined;
+    const { count, rows } = await Review.findAndCountAll({
+      where,
+      include: [
+        {
+          model: Property,
+          as: 'property',
+          attributes: ['id', 'name', 'city', 'neighborhood', 'agentId'],
+          where: propertyWhere,
+          required: Boolean(propertyWhere)
+        },
+        { model: User, as: 'reviewer', attributes: ['id', 'fullName', 'email'] },
+        {
+          model: ReviewReport,
+          as: 'reportRecords',
+          where: reportWhere,
+          required: Boolean(reportWhere),
+          include: [{ model: User, as: 'reporter', attributes: ['id', 'fullName', 'email'] }]
+        }
+      ],
+      distinct: true,
+      order: [['createdAt', 'DESC']],
+      limit,
+      offset: (page - 1) * limit
+    });
+    const [published, pendingReports, total, hidden, rejected] = await Promise.all([
+      Review.findAll({ where: { status: 'published' }, attributes: ['overallRating'] }),
+      ReviewReport.count({ where: { status: 'pending' } }),
+      Review.count(),
+      Review.count({ where: { status: 'hidden' } }),
+      Review.count({ where: { status: 'rejected' } })
+    ]);
+    const averageRating = published.length
+      ? Number((published.reduce((sum, review) => sum + review.overallRating, 0) / published.length).toFixed(2))
+      : 0;
+
+    res.json({
+      reviews: rows,
+      pagination: { page, limit, total: count, pages: Math.ceil(count / limit) },
+      stats: {
+        published: published.length,
+        hidden,
+        rejected,
+        pendingReports,
+        averageRating,
+        total
+      }
+    });
+  } catch (error) {
+    console.error('Get review moderation queue error:', error.message);
+    res.status(500).json({ error: 'Failed to fetch review moderation queue' });
+  }
+});
+
+router.patch('/reviews/:id/moderation', authenticateToken, requireRole('ADMIN'), [
+  body('status').isIn(['published', 'hidden', 'rejected']),
+  body('reason').trim().isLength({ min: 5, max: 1000 })
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ error: 'A valid status and moderation reason are required' });
+  }
+  const transaction = await sequelize.transaction();
+  try {
+    const review = await Review.findByPk(req.params.id, { transaction });
+    if (!review) {
+      await transaction.rollback();
+      return res.status(404).json({ error: 'Review not found' });
+    }
+    const previousStatus = review.status;
+    await review.update({
+      status: req.body.status,
+      moderationReason: req.body.reason.trim()
+    }, { transaction });
+    await ReviewReport.update(
+      { status: 'resolved' },
+      { where: { reviewId: review.id, status: 'pending' }, transaction }
+    );
+    await AdminAuditEvent.create({
+      actorId: req.user.id,
+      action: 'REVIEW_MODERATED',
+      entityType: 'Review',
+      entityId: review.id,
+      metadata: {
+        previousStatus,
+        status: review.status,
+        reason: req.body.reason.trim()
+      },
+      ipAddress: req.ip
+    }, { transaction });
+    await transaction.commit();
+    res.json({ message: 'Review moderation saved', review });
+  } catch (error) {
+    await transaction.rollback();
+    console.error('Moderate review error:', error.message);
+    res.status(500).json({ error: 'Failed to moderate review' });
+  }
+});
+
 // Get all users
 router.get('/users', authenticateToken, requireRole('ADMIN'), async (req, res) => {
   try {
     const { role, verification, search } = req.query;
-
+    
     const where = {};
     if (role) where.role = role;
     if (verification) where.verification = verification;
@@ -165,7 +372,7 @@ router.patch('/users/:id/status', authenticateToken, requireRole('ADMIN'), [
 router.get('/properties', authenticateToken, requireRole('ADMIN'), async (req, res) => {
   try {
     const { businessModel, status, city, agentId } = req.query;
-
+    
     const where = {};
     if (businessModel) where.businessModel = businessModel;
     if (status) where.listingStatus = status;
@@ -230,7 +437,7 @@ router.patch('/properties/:id/status', authenticateToken, requireRole('ADMIN'), 
 router.get('/bookings', authenticateToken, requireRole('ADMIN'), async (req, res) => {
   try {
     const { status, propertyId, customerId } = req.query;
-
+    
     const where = {};
     if (status) where.status = status;
     if (propertyId) where.propertyId = propertyId;
@@ -264,7 +471,7 @@ router.get('/bookings', authenticateToken, requireRole('ADMIN'), async (req, res
 router.get('/transactions', authenticateToken, requireRole('ADMIN'), async (req, res) => {
   try {
     const { status, purpose, methodId } = req.query;
-
+    
     const where = {};
     if (status) where.status = status;
     if (purpose) where.purpose = purpose;
@@ -298,7 +505,7 @@ router.get('/transactions', authenticateToken, requireRole('ADMIN'), async (req,
 router.get('/unlocks', authenticateToken, requireRole('ADMIN'), async (req, res) => {
   try {
     const { status, listingId, customerId } = req.query;
-
+    
     const where = {};
     if (status) where.status = status;
     if (listingId) where.listingId = listingId;
@@ -383,7 +590,7 @@ router.put('/config', authenticateToken, requireRole('ADMIN'), [
 router.get('/notifications', authenticateToken, requireRole('ADMIN'), async (req, res) => {
   try {
     const { audience, isRead } = req.query;
-
+    
     const where = {};
     if (audience) where.audience = audience;
     if (isRead !== undefined) where.isRead = isRead;
@@ -438,7 +645,7 @@ router.post('/notifications', authenticateToken, requireRole('ADMIN'), [
       )
     );
 
-    res.status(201).json({
+    res.status(201).json({ 
       message: `Notification sent to ${notifications.length} users`,
       count: notifications.length
     });

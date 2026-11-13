@@ -1,10 +1,27 @@
 import 'package:flutter/material.dart';
+import 'package:haven_link/core/theme/haven_icons.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../../../core/config/env_config.dart';
 import '../data/admin_users_repository.dart';
+import '../data/admin_dashboard_repository.dart';
 import '../../../core/formatters/currency_formatter.dart';
+import '../../../core/localization/app_strings.dart';
 import '../../../core/state/haven_link_store.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/widgets/portal_page_header.dart';
+import '../../../core/widgets/metric_card.dart';
+import '../../../core/widgets/portfolio_operations.dart';
+import '../../notifications/presentation/notification_center_screen.dart';
+import '../../../core/widgets/portal_sidebar.dart';
+import '../../../core/widgets/portal_scaffold.dart';
 import '../../properties/domain/property.dart';
+import '../../properties/presentation/widgets/property_photo.dart';
+import '../../reviews/presentation/admin_reviews_tab.dart';
+import '../../reviews/presentation/admin_reports_tab.dart';
+import '../../financial_management/presentation/admin_financial_overview_screen.dart';
+import 'admin_room_inventory_screen.dart';
+import 'admin_audit_events_tab.dart';
 
 /// Administrator dashboard for Haven Link.
 ///
@@ -28,30 +45,152 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     }
 
     return DefaultTabController(
-      length: 6,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Admin Dashboard'),
-          bottom: const TabBar(
-            isScrollable: true,
-            tabs: [
-              Tab(text: 'Overview'),
-              Tab(text: 'Users'),
-              Tab(text: 'Properties'),
-              Tab(text: 'Bookings'),
-              Tab(text: 'Payments'),
-              Tab(text: 'Settings'),
-            ],
-          ),
-        ),
-        body: TabBarView(
-          children: [
-            _OverviewTab(store: widget.store),
+      length: 11,
+      child: Builder(
+        builder: (context) {
+          final tabs = DefaultTabController.of(context);
+          final showSidebar = MediaQuery.sizeOf(context).width >= 1100;
+          final labels = [
+            context.tr('Overview'),
+            context.tr('Users'),
+            context.tr('Properties'),
+            context.tr('Bookings'),
+            context.tr('Payments'),
+            context.tr('Settings'),
+            context.tr('Reviews'),
+            context.tr('Problem reports'),
+            context.tr('Financial Management'),
+            context.tr('Room Inventory'),
+            context.tr('Audit History'),
+          ];
+          const icons = [
+            LucideIcons.layoutDashboard,
+            LucideIcons.usersRound,
+            LucideIcons.building2,
+            LucideIcons.notebookPen,
+            LucideIcons.wallet,
+            LucideIcons.settings,
+            LucideIcons.star,
+            LucideIcons.circleAlert,
+            LucideIcons.circleDollarSign,
+            LucideIcons.doorOpen,
+            LucideIcons.history,
+          ];
+          final pages = [
+            _OverviewTab(
+              store: widget.store,
+              onReviewQueue: () => tabs.animateTo(2),
+            ),
             _UsersTab(store: widget.store),
             _PropertiesTab(store: widget.store),
             _BookingsTab(store: widget.store),
             _PaymentsTab(store: widget.store),
             _SettingsTab(store: widget.store),
+            AdminReviewsTab(
+              tokenProvider: () =>
+                  widget.store.authenticationRepository.accessToken,
+            ),
+            AdminReportsTab(
+              tokenProvider: () =>
+                  widget.store.authenticationRepository.accessToken,
+            ),
+            AdminFinancialOverviewScreen(
+              tokenProvider: () =>
+                  widget.store.authenticationRepository.accessToken,
+            ),
+            AdminRoomInventoryScreen(store: widget.store),
+            AdminAuditEventsTab(
+              tokenProvider: () =>
+                  widget.store.authenticationRepository.accessToken,
+            ),
+          ];
+
+          return AnimatedBuilder(
+            animation: tabs,
+            builder: (context, _) => HavenPortalScaffold(
+              showSidebar: showSidebar,
+              sidebar: _buildSidebar(context, tabs, labels, icons, false),
+              appBar: AppBar(
+                automaticallyImplyLeading: !showSidebar,
+                title: showSidebar
+                    ? PortalHeaderTitle(
+                        title: labels[tabs.index],
+                        destinations: labels,
+                        onDestination: tabs.animateTo,
+                      )
+                    : Text(context.tr('Admin Dashboard')),
+                actions: [
+                  NotificationBellButton(
+                    tokenProvider: () =>
+                        widget.store.authenticationRepository.accessToken,
+                  ),
+                  PortalAvatar(name: widget.store.currentUser?.fullName ?? ''),
+                  IconButton(
+                    tooltip: context.tr('Sign out'),
+                    onPressed: () {
+                      widget.store.signOut();
+                      Navigator.of(context).pop();
+                    },
+                    icon: const Icon(LucideIcons.logOut),
+                  ),
+                ],
+                bottom: showSidebar
+                    ? null
+                    : TabBar(
+                        isScrollable: true,
+                        tabs: [for (final label in labels) Tab(text: label)],
+                      ),
+              ),
+              drawer: showSidebar
+                  ? null
+                  : Drawer(
+                      child: _buildSidebar(context, tabs, labels, icons, true),
+                    ),
+              body: Row(
+                children: [Expanded(child: TabBarView(children: pages))],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildSidebar(
+    BuildContext context,
+    TabController tabs,
+    List<String> labels,
+    List<IconData> icons,
+    bool closeOnSelect,
+  ) {
+    return Material(
+      color: HavenTheme.white,
+      child: SafeArea(
+        child: ListView(
+          key: const Key('portal-sidebar'),
+          padding: const EdgeInsets.all(20),
+          children: [
+            PortalSidebarHeading(
+              workspace: context.tr('Haven Link Administration'),
+            ),
+            for (var index = 0; index < labels.length; index++)
+              PortalSidebarItem(
+                icon: icons[index],
+                label: labels[index],
+                selected: tabs.index == index,
+                onTap: () {
+                  tabs.animateTo(index);
+                  if (closeOnSelect) Navigator.of(context).pop();
+                },
+              ),
+            TextButton.icon(
+              onPressed: () {
+                if (closeOnSelect) Navigator.of(context).pop();
+                Navigator.of(this.context).pop();
+              },
+              icon: const Icon(HavenIcons.chevronLeft, size: 16),
+              label: Text(context.tr('Back to marketplace')),
+            ),
           ],
         ),
       ),
@@ -63,7 +202,7 @@ class _UnauthorizedView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Admin Dashboard')),
+      appBar: AppBar(title: Text(context.tr('Admin Dashboard'))),
       body: Center(
         child: Card(
           child: Padding(
@@ -72,18 +211,20 @@ class _UnauthorizedView extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Icon(
-                  Icons.admin_panel_settings,
+                  HavenIcons.adminPanelSettings,
                   size: 48,
                   color: HavenTheme.muted,
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  'Access Restricted',
+                  context.tr('Access Restricted'),
                   style: Theme.of(context).textTheme.headlineMedium,
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  'You do not have permission to access the admin dashboard.',
+                Text(
+                  context.tr(
+                    'You do not have permission to access the admin dashboard.',
+                  ),
                   textAlign: TextAlign.center,
                 ),
               ],
@@ -96,7 +237,8 @@ class _UnauthorizedView extends StatelessWidget {
 }
 
 class _OverviewTab extends StatelessWidget {
-  const _OverviewTab({required this.store});
+  const _OverviewTab({required this.store, this.onReviewQueue});
+  final VoidCallback? onReviewQueue;
 
   final HavenLinkStore store;
 
@@ -105,15 +247,28 @@ class _OverviewTab extends StatelessWidget {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            'Platform Overview',
-            style: Theme.of(context).textTheme.headlineMedium,
+          PortalPageHeader(
+            eyebrow: context.tr('Admin Dashboard'),
+            action: FilledButton.icon(
+              onPressed: onReviewQueue,
+              icon: const Icon(HavenIcons.add, size: 16),
+              label: Text(context.tr('Review queue')),
+            ),
+            title: context.tr('Platform Overview'),
+            subtitle: context.tr('Monitor platform activity and operations.'),
+            icon: HavenIcons.adminPanelSettingsOutlined,
           ),
           const SizedBox(height: 16),
           _StatsGrid(store: store),
           const SizedBox(height: 24),
+          PropertyPortfolioPanel(
+            properties: store.allProperties,
+            title: 'Live operations',
+            onManage: onReviewQueue,
+          ),
+          const SizedBox(height: 20),
           _RecentActivitySection(store: store),
         ],
       ),
@@ -121,51 +276,149 @@ class _OverviewTab extends StatelessWidget {
   }
 }
 
-class _StatsGrid extends StatelessWidget {
+class _StatsGrid extends StatefulWidget {
   const _StatsGrid({required this.store});
 
   final HavenLinkStore store;
 
   @override
+  State<_StatsGrid> createState() => _StatsGridState();
+}
+
+class _StatsGridState extends State<_StatsGrid> {
+  late final AdminDashboardRepository _repository = AdminDashboardRepository(
+    tokenProvider: () => widget.store.authenticationRepository.accessToken,
+  );
+  Future<AdminDashboardSummary>? _summary;
+
+  @override
+  void initState() {
+    super.initState();
+    if (EnvConfig.backendConfigured) _summary = _repository.loadSummary();
+  }
+
+  void _reload() {
+    setState(() => _summary = _repository.loadSummary());
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return GridView.count(
-      crossAxisCount: 2,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      mainAxisSpacing: 12,
-      crossAxisSpacing: 12,
-      childAspectRatio: 1.5,
-      children: [
-        _StatCard(
-          title: 'Total Users',
-          value: store.allProperties.length.toString(), // Placeholder
-          icon: Icons.people,
-          color: HavenTheme.teal,
-        ),
-        _StatCard(
-          title: 'Properties',
-          value: store.allProperties.length.toString(),
-          icon: Icons.home_work,
-          color: HavenTheme.mint,
-        ),
-        _StatCard(
-          title: 'Bookings',
-          value: store.bookings.length.toString(),
-          icon: Icons.luggage,
-          color: Colors.orange,
-        ),
-        _StatCard(
-          title: 'Revenue',
-          value: formatTzs(
-            store.paymentRecords.fold<int>(
-              0,
-              (sum, record) => sum + record.amountTzs,
+    final summary = _summary;
+    if (summary == null) {
+      return Column(
+        children: [
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(12),
+              child: Text(
+                'Connect the backend for live admin metrics. Other values are local preview data.',
+              ),
             ),
           ),
-          icon: Icons.payments,
-          color: Colors.green,
-        ),
-      ],
+          _statsGrid(
+            totalUsers: '—',
+            totalProperties: widget.store.allProperties.length.toString(),
+            totalBookings: widget.store.bookings.length.toString(),
+            totalRevenue: formatTzs(
+              widget.store.paymentRecords.fold<int>(
+                0,
+                (sum, record) => sum + record.amountTzs,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return FutureBuilder<AdminDashboardSummary>(
+      future: summary,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const SizedBox(
+            height: 180,
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (snapshot.hasError) {
+          return Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(snapshot.error.toString()),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: _reload,
+                      icon: const Icon(HavenIcons.refresh),
+                      label: const Text('Retry'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+        final stats = snapshot.requireData;
+        return _statsGrid(
+          totalUsers: stats.totalUsers.toString(),
+          totalProperties: stats.totalProperties.toString(),
+          totalBookings: stats.totalBookings.toString(),
+          totalRevenue: formatTzs(stats.totalRevenueTzs),
+        );
+      },
+    );
+  }
+
+  Widget _statsGrid({
+    required String totalUsers,
+    required String totalProperties,
+    required String totalBookings,
+    required String totalRevenue,
+  }) {
+    final cards = <Widget>[
+      _StatCard(
+        title: context.tr('Total Users'),
+        value: totalUsers,
+        icon: HavenIcons.people,
+        color: HavenTheme.teal,
+      ),
+      _StatCard(
+        title: context.tr('Properties'),
+        value: totalProperties,
+        icon: HavenIcons.homeWork,
+        color: HavenTheme.mint,
+      ),
+      _StatCard(
+        title: context.tr('Bookings'),
+        value: totalBookings,
+        icon: HavenIcons.luggage,
+        color: Colors.orange,
+      ),
+      _StatCard(
+        title: context.tr('Revenue'),
+        value: totalRevenue,
+        icon: HavenIcons.payments,
+        color: Colors.green,
+      ),
+    ];
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 1000
+            ? 4
+            : constraints.maxWidth >= 560
+            ? 2
+            : 1;
+        final width = (constraints.maxWidth - (columns - 1) * 12) / columns;
+        return Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            for (final card in cards) SizedBox(width: width, child: card),
+          ],
+        );
+      },
     );
   }
 }
@@ -184,26 +437,8 @@ class _StatCard extends StatelessWidget {
   final Color color;
 
   @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, color: color, size: 32),
-            const SizedBox(height: 8),
-            Text(
-              title,
-              style: const TextStyle(fontSize: 12, color: HavenTheme.muted),
-            ),
-            const SizedBox(height: 4),
-            Text(value, style: Theme.of(context).textTheme.headlineSmall),
-          ],
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) =>
+      HavenMetricCard(label: title, value: value, icon: icon, color: color);
 }
 
 class _RecentActivitySection extends StatelessWidget {
@@ -220,12 +455,12 @@ class _RecentActivitySection extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Recent Activity',
+              context.tr('Recent Activity'),
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 12),
             if (store.notifications.isEmpty)
-              const Text('No recent activity')
+              Text(context.tr('No recent activity'))
             else
               ListView.separated(
                 shrinkWrap: true,
@@ -236,7 +471,7 @@ class _RecentActivitySection extends StatelessWidget {
                   final notification = store.notifications[index];
                   return ListTile(
                     dense: true,
-                    leading: const Icon(Icons.notifications),
+                    leading: const Icon(HavenIcons.notifications),
                     title: Text(notification.title),
                     subtitle: Text(notification.message),
                     trailing: Text(
@@ -329,7 +564,7 @@ class _UsersTabState extends State<_UsersTab> {
               IconButton(
                 tooltip: 'Refresh users',
                 onPressed: _loading ? null : _load,
-                icon: const Icon(Icons.refresh),
+                icon: const Icon(HavenIcons.refresh),
               ),
             ],
           ),
@@ -340,6 +575,7 @@ class _UsersTabState extends State<_UsersTab> {
               SizedBox(
                 width: 190,
                 child: DropdownButtonFormField<String>(
+                  isExpanded: true,
                   initialValue: _roleFilter,
                   decoration: const InputDecoration(labelText: 'Role'),
                   items: const [
@@ -365,6 +601,7 @@ class _UsersTabState extends State<_UsersTab> {
               SizedBox(
                 width: 190,
                 child: DropdownButtonFormField<String>(
+                  isExpanded: true,
                   initialValue: _statusFilter,
                   decoration: const InputDecoration(
                     labelText: 'Account status',
@@ -422,14 +659,96 @@ class _UsersTabState extends State<_UsersTab> {
       '${user.email} · ${user.phone} · ${user.role} · ${user.verification}',
     ),
     leading: Icon(
-      user.enabled ? Icons.person_outline : Icons.person_off_outlined,
+      user.enabled ? HavenIcons.personOutline : HavenIcons.personOffOutlined,
     ),
-    trailing: IconButton(
-      tooltip: 'Manage account',
-      onPressed: () => _editUser(user),
-      icon: const Icon(Icons.manage_accounts_outlined),
+    trailing: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (user.role == 'RENTAL_AGENT' || user.role == 'STAY_AGENT')
+          IconButton(
+            tooltip: 'Agent workspaces',
+            onPressed: () => _manageWorkspaces(user),
+            icon: const Icon(HavenIcons.workspacesOutline),
+          ),
+        IconButton(
+          tooltip: 'Manage account',
+          onPressed: () => _editUser(user),
+          icon: const Icon(HavenIcons.manageAccountsOutlined),
+        ),
+      ],
     ),
   );
+
+  Future<void> _manageWorkspaces(AdminUserRecord user) async {
+    Map<String, String> statuses;
+    try {
+      statuses = await _repository.loadWorkspaces(user.id);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      return;
+    }
+    if (!mounted) return;
+    const titles = {
+      'RENTAL': 'Long-Term Rentals',
+      'APARTMENT': 'Apartments / Short-Term Stays',
+      'HOTEL': 'Hotels, Lodges & Motels',
+    };
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: Text('${user.fullName} · workspaces'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final entry in titles.entries)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(entry.value),
+                  subtitle: Text(statuses[entry.key] ?? 'not granted'),
+                  trailing: PopupMenuButton<String>(
+                    tooltip: 'Change workspace access',
+                    onSelected: (status) async {
+                      try {
+                        await _repository.setWorkspaceStatus(
+                          user.id,
+                          entry.key,
+                          status,
+                        );
+                        statuses = await _repository.loadWorkspaces(user.id);
+                        setDialogState(() {});
+                      } catch (error) {
+                        if (!dialogContext.mounted) return;
+                        ScaffoldMessenger.of(dialogContext).showSnackBar(
+                          SnackBar(content: Text(error.toString())),
+                        );
+                      }
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(value: 'active', child: Text('Activate')),
+                      PopupMenuItem(
+                        value: 'pending_review',
+                        child: Text('Mark pending review'),
+                      ),
+                      PopupMenuItem(value: 'revoked', child: Text('Revoke')),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Future<void> _editUser(AdminUserRecord user) async {
     var role = user.role;
@@ -445,6 +764,7 @@ class _UsersTabState extends State<_UsersTab> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 DropdownButtonFormField<String>(
+                  isExpanded: true,
                   initialValue: role,
                   decoration: const InputDecoration(labelText: 'Account role'),
                   items: const [
@@ -660,7 +980,14 @@ class _PropertyListItem extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       child: ListTile(
-        leading: CircleAvatar(backgroundImage: NetworkImage(property.imageUrl)),
+        leading: ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: SizedBox(
+            width: 48,
+            height: 48,
+            child: PropertyPhoto(imageUrl: property.imageUrl, height: 48),
+          ),
+        ),
         title: Text(property.name),
         subtitle: Text(
           '${property.generalLocation} • ${property.businessModel.name}',
@@ -762,7 +1089,7 @@ class _StatusChip extends StatelessWidget {
 
     return Chip(
       label: Text(status.label),
-      backgroundColor: color.withOpacity(0.1),
+      backgroundColor: color.withValues(alpha: 0.1),
     );
   }
 }
@@ -812,7 +1139,7 @@ class _BookingListItem extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       child: ListTile(
-        leading: const CircleAvatar(child: Icon(Icons.luggage)),
+        leading: const CircleAvatar(child: Icon(HavenIcons.luggage)),
         title: Text(booking.property.name),
         subtitle: Text('${booking.guestName} • ${_date(booking.checkIn)}'),
         trailing: Text(formatTzs(booking.totalTzs)),
@@ -908,52 +1235,40 @@ class _PaymentStats extends StatelessWidget {
         .where((p) => p.status?.name == 'failed')
         .length;
 
-    return Row(
-      children: [
-        _PaymentStatChip(
-          label: 'Total',
-          value: formatTzs(total),
-          color: HavenTheme.teal,
-        ),
-        const SizedBox(width: 8),
-        _PaymentStatChip(
-          label: 'Succeeded',
-          value: succeeded.toString(),
-          color: Colors.green,
-        ),
-        const SizedBox(width: 8),
-        _PaymentStatChip(
-          label: 'Failed',
-          value: failed.toString(),
-          color: Colors.red,
-        ),
-      ],
-    );
-  }
-}
-
-class _PaymentStatChip extends StatelessWidget {
-  const _PaymentStatChip({
-    required this.label,
-    required this.value,
-    required this.color,
-  });
-
-  final String label;
-  final String value;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Chip(
-      avatar: CircleAvatar(
-        backgroundColor: color,
-        child: Text(
-          value,
-          style: const TextStyle(color: Colors.white, fontSize: 10),
-        ),
-      ),
-      label: Text('$label: $value'),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 780
+            ? 3
+            : constraints.maxWidth >= 500
+            ? 2
+            : 1;
+        final width = (constraints.maxWidth - (columns - 1) * 12) / columns;
+        return Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            for (final (label, value, icon, color) in [
+              ('Total', formatTzs(total), HavenIcons.payments, HavenTheme.teal),
+              (
+                'Succeeded',
+                succeeded.toString(),
+                HavenIcons.checkCircle,
+                Colors.green,
+              ),
+              ('Failed', failed.toString(), HavenIcons.cancel, Colors.red),
+            ])
+              SizedBox(
+                width: width,
+                child: HavenMetricCard(
+                  label: label,
+                  value: value,
+                  icon: icon,
+                  color: color,
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }
@@ -967,7 +1282,7 @@ class _PaymentListItem extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       child: ListTile(
-        leading: const CircleAvatar(child: Icon(Icons.payment)),
+        leading: const CircleAvatar(child: Icon(HavenIcons.payment)),
         title: Text(payment.purpose),
         subtitle: Text('${payment.property.name} • ${payment.method}'),
         trailing: Text(formatTzs(payment.amountTzs)),
@@ -1168,7 +1483,7 @@ class _FeeRow extends StatelessWidget {
             Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(width: 8),
             IconButton(
-              icon: const Icon(Icons.edit, size: 16),
+              icon: const Icon(HavenIcons.edit, size: 16),
               onPressed: onEdit,
             ),
           ],
@@ -1191,25 +1506,23 @@ class _PlatformSettingsCard extends StatelessWidget {
               'Platform Settings',
               style: Theme.of(context).textTheme.titleLarge,
             ),
-            const SizedBox(height: 16),
-            SwitchListTile(
-              title: const Text('Require Listing Approval'),
-              subtitle: const Text(
-                'Listings must be approved before going public',
+            const SizedBox(height: 8),
+            const ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(HavenIcons.verifiedOutlined),
+              title: Text('Listing approval'),
+              subtitle: Text(
+                'New listings are submitted for review and are only public once published.',
               ),
-              value: true, // Placeholder
-              onChanged: (value) {
-                // TODO: Update setting
-              },
             ),
             const Divider(),
-            SwitchListTile(
-              title: const Text('Enable Notifications'),
-              subtitle: const Text('Send notifications for important events'),
-              value: true, // Placeholder
-              onChanged: (value) {
-                // TODO: Update setting
-              },
+            const ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(HavenIcons.notificationsActiveOutlined),
+              title: Text('Notifications'),
+              subtitle: Text(
+                'Booking, payment, checkout and rent alerts are always sent in-app. Customers and agents choose their own channels in notification preferences.',
+              ),
             ),
           ],
         ),

@@ -1,8 +1,11 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
-const { PaymentTransaction, UnlockRecord, Booking, Property, User, BusinessConfiguration } = require('../models');
+const { Op, Transaction } = require('sequelize');
+const { sequelize, PaymentTransaction, UnlockRecord, Booking, Room, RoomAvailabilityBlock, Property, User, BusinessConfiguration } = require('../models');
 const { authenticateToken } = require('../middleware/auth');
 const paymentService = require('../services/paymentService');
+const { unavailableRoomIds } = require('../services/roomAvailability');
+const { onBookingConfirmed } = require('../services/bookingConfirmation');
 
 const router = express.Router();
 
@@ -71,12 +74,16 @@ router.post('/transactions', authenticateToken, [
         where: { id: bookingId, customerId: req.user.id, status: 'pending' }
       });
       if (!booking) return res.status(404).json({ error: 'Pending booking not found' });
+      if (booking.holdExpiresAt && new Date(booking.holdExpiresAt) <= new Date()) {
+        await booking.update({ status: 'cancelled', assignedRoomId: null, holdExpiresAt: null });
+        return res.status(409).json({ error: 'The room hold expired. Start a new booking to check availability again.' });
+      }
       amountTzs = booking.totalTzs;
     }
 
     // Check if payment service is configured
     if (!paymentService.isConfigured()) {
-      return res.status(503).json({
+      return res.status(503).json({ 
         error: 'Payment service not configured',
         message: 'Payment processing is not available. Please contact support.'
       });
@@ -104,6 +111,12 @@ router.post('/transactions', authenticateToken, [
       bookingId,
       idempotencyKey
     );
+    if (purpose === 'accommodationBooking') {
+      await Booking.update(
+        { paymentTransactionId: transaction.id },
+        { where: { id: bookingId, customerId: req.user.id, status: 'pending' } }
+      );
+    }
 
     res.status(201).json({
       message: 'Payment transaction created',
@@ -181,46 +194,167 @@ router.post('/transactions/:id/verify', authenticateToken, async (req, res) => {
 
     // Process based on purpose
     if (verifiedTransaction.purpose === 'rentalContactUnlock' && verifiedTransaction.status === 'succeeded') {
+      if (!verifiedTransaction.verifiedAt || !verifiedTransaction.listingId) {
+        return res.status(409).json({ error: 'Payment succeeded, but the rental unlock cannot be verified. Contact support.' });
+      }
       // Create unlock record
       const existingUnlock = await UnlockRecord.findOne({
         where: {
-          customerId: req.user.id,
-          listingId: transaction.listingId
+          customerId: verifiedTransaction.customerId,
+          listingId: verifiedTransaction.listingId
         }
       });
 
       if (!existingUnlock) {
         await UnlockRecord.create({
-          customerId: req.user.id,
-          listingId: transaction.listingId,
-          paymentTransactionId: transaction.id,
+          customerId: verifiedTransaction.customerId,
+          listingId: verifiedTransaction.listingId,
+          paymentTransactionId: verifiedTransaction.id,
           status: 'active',
           confirmedAt: new Date(),
-          amountTzs: transaction.amountTzs
+          amountTzs: verifiedTransaction.amountTzs
         });
       } else if (existingUnlock.status !== 'active') {
         await existingUnlock.update({
           status: 'active',
           confirmedAt: new Date(),
-          paymentTransactionId: transaction.id
+          paymentTransactionId: verifiedTransaction.id,
+          amountTzs: verifiedTransaction.amountTzs
         });
       }
     } else if (verifiedTransaction.purpose === 'accommodationBooking' && verifiedTransaction.status === 'succeeded') {
-      // Update booking status
       const booking = await Booking.findOne({
-        where: { paymentTransactionId: transaction.id }
+        where: transaction.bookingId
+          ? { id: transaction.bookingId, customerId: transaction.customerId }
+          : { paymentTransactionId: transaction.id }
       });
 
-      if (booking) {
-        await booking.update({
-          status: 'confirmed',
-          paymentTransactionId: transaction.id
-        });
+      if (!booking) {
+        return res.status(409).json({ error: 'Payment succeeded, but its booking could not be found. Contact support.' });
       }
+      if (verifiedTransaction.customerId !== booking.customerId ||
+          verifiedTransaction.bookingId !== booking.id ||
+          verifiedTransaction.amountTzs !== booking.totalTzs ||
+          !verifiedTransaction.verifiedAt) {
+        return res.status(409).json({ error: 'Payment succeeded, but its booking details do not match. Contact support.' });
+      }
+      if (booking.status === 'confirmed' && booking.paymentTransactionId !== transaction.id) {
+        return res.status(409).json({ error: 'Payment succeeded, but another payment confirmed this booking. Contact support.' });
+      }
+      if (booking.status !== 'confirmed') {
+        try {
+          await sequelize.transaction({ type: Transaction.TYPES.IMMEDIATE }, async (dbTransaction) => {
+            await booking.reload({ transaction: dbTransaction });
+            if (booking.status === 'confirmed' && booking.paymentTransactionId === transaction.id) return;
+            if (booking.status !== 'pending' || booking.paymentTransactionId !== transaction.id ||
+                transaction.customerId !== booking.customerId ||
+                transaction.bookingId !== booking.id ||
+                transaction.amountTzs !== booking.totalTzs ||
+                !verifiedTransaction.verifiedAt ||
+                (booking.holdExpiresAt && new Date(booking.holdExpiresAt) <= new Date())) {
+              const error = new Error('Payment succeeded, but the booking cannot be confirmed. Contact support.');
+              error.status = 409;
+              throw error;
+            }
+            const property = await Property.findByPk(booking.propertyId, { transaction: dbTransaction });
+            if (!property || property.businessModel !== 'bookable') {
+              const error = new Error('Payment succeeded, but the stay is unavailable. Contact support.');
+              error.status = 409;
+              throw error;
+            }
+            const isApartment = ['servicedApartment', 'shortStayApartment'].includes(property.category);
+            const isMultiRoomStay = ['hotel', 'motel', 'lodge']
+              .includes(property.accommodationType || property.category);
+            if (isApartment) {
+              const conflict = await Booking.findOne({
+                where: {
+                  id: { [Op.ne]: booking.id },
+                  propertyId: booking.propertyId,
+                  checkIn: { [Op.lt]: booking.checkOut },
+                  checkOut: { [Op.gt]: booking.checkIn },
+                  [Op.or]: [
+                    { status: { [Op.in]: ['confirmed', 'completed'] } },
+                    { status: 'pending', holdExpiresAt: { [Op.gt]: new Date() } }
+                  ]
+                },
+                attributes: ['id'],
+                transaction: dbTransaction
+              });
+              if (conflict) {
+                const error = new Error('Payment succeeded, but the apartment is no longer available. Contact support.');
+                error.status = 409;
+                throw error;
+              }
+            }
+            const rooms = !isApartment && booking.roomTypeId
+              ? await Room.findAll({
+                  where: {
+                    propertyId: booking.propertyId,
+                    roomTypeId: booking.roomTypeId,
+                    status: 'active'
+                  },
+                  order: [['roomNumber', 'ASC']],
+                  transaction: dbTransaction
+                })
+              : [];
+            if (isMultiRoomStay && rooms.length === 0) {
+              const error = new Error('Payment succeeded, but no assigned room is available. Contact support.');
+              error.status = 409;
+              throw error;
+            }
+            let assignedRoomId = booking.assignedRoomId;
+            if (rooms.length > 0) {
+              const unavailable = await unavailableRoomIds(
+                rooms.map((room) => room.id), booking.checkIn, booking.checkOut,
+                { transaction: dbTransaction, excludeBookingId: booking.id }
+              );
+              const room = rooms.find((candidate) =>
+                candidate.id === assignedRoomId && !unavailable.has(candidate.id)
+              ) || rooms.find((candidate) => !unavailable.has(candidate.id));
+              if (!room) {
+                const error = new Error('Payment succeeded, but no room is available to confirm this reservation.');
+                error.status = 409;
+                throw error;
+              }
+              assignedRoomId = room.id;
+            }
+            await booking.update({
+              status: 'confirmed',
+              assignedRoomId,
+              holdExpiresAt: null,
+              paymentTransactionId: transaction.id
+            }, { transaction: dbTransaction });
+          });
+        } catch (error) {
+          if (error.status === 409) {
+            return res.status(409).json({ error: error.message });
+          }
+          throw error;
+        }
+      }
+    } else if (verifiedTransaction.purpose === 'accommodationBooking' && ['failed', 'expired', 'cancelled'].includes(verifiedTransaction.status)) {
+      await Booking.update(
+        { status: 'cancelled', assignedRoomId: null, holdExpiresAt: null },
+        { where: {
+          id: verifiedTransaction.bookingId,
+          customerId: verifiedTransaction.customerId,
+          paymentTransactionId: verifiedTransaction.id,
+          status: 'pending'
+        } }
+      );
+    }
+
+    if (verifiedTransaction.purpose === 'accommodationBooking' && verifiedTransaction.status === 'succeeded' &&
+        verifiedTransaction.bookingId) {
+      await onBookingConfirmed(verifiedTransaction.bookingId).catch((error) => {
+        console.error('Booking confirmation side effects failed:', error.message);
+      });
     }
 
     res.json({
-      message: 'Payment verified successfully',
+      message: verifiedTransaction.status === 'succeeded'
+        ? 'Payment verified successfully'
+        : 'Payment verification completed',
       transaction: {
         id: verifiedTransaction.id,
         reference: verifiedTransaction.reference,

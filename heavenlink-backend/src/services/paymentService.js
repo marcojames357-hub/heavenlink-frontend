@@ -17,7 +17,7 @@ class PaymentService {
     }
 
     const reference = this.generateReference();
-
+    
     try {
       let providerResponse;
       switch (method.provider) {
@@ -188,7 +188,7 @@ class PaymentService {
 
   async initiateStripePayment(amount, customerId, reference) {
     const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-
+    
     const paymentIntent = await stripe.paymentIntents.create({
       amount: amount, // Amount in cents
       currency: 'TZS',
@@ -222,7 +222,7 @@ class PaymentService {
   async checkStripeStatus(paymentIntentId) {
     const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
     const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
-
+    
     return {
       success: paymentIntent.status === 'succeeded',
       message: paymentIntent.status

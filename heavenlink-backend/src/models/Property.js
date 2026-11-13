@@ -28,6 +28,30 @@ const Property = sequelize.define('Property', {
       len: [2, 100]
     }
   },
+  latitude: {
+    type: DataTypes.FLOAT,
+    allowNull: true,
+    validate: { min: -90, max: 90 }
+  },
+  longitude: {
+    type: DataTypes.FLOAT,
+    allowNull: true,
+    validate: { min: -180, max: 180 }
+  },
+  formattedAddress: {
+    type: DataTypes.STRING(500),
+    allowNull: true
+  },
+  locationVerification: {
+    type: DataTypes.ENUM('unverified', 'pending', 'verified'),
+    allowNull: false,
+    defaultValue: 'unverified'
+  },
+  locationVisibility: {
+    type: DataTypes.ENUM('exact', 'approximate', 'hidden'),
+    allowNull: false,
+    defaultValue: 'approximate'
+  },
   priceTzs: {
     type: DataTypes.INTEGER,
     allowNull: false,
@@ -42,6 +66,10 @@ const Property = sequelize.define('Property', {
   category: {
     type: DataTypes.ENUM('hotel', 'lodge', 'servicedApartment', 'shortStayApartment', 'house', 'room', 'sharedAccommodation'),
     allowNull: false
+  },
+  accommodationType: {
+    type: DataTypes.STRING(30),
+    allowNull: true
   },
   imageUrl: {
     type: DataTypes.STRING,
@@ -90,8 +118,25 @@ const Property = sequelize.define('Property', {
       min: 0
     }
   },
+  // Whole-unit apartments only: total guests the unit sleeps.
+  maxGuests: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    validate: { min: 1, max: 50 }
+  },
+  // Whole-unit apartments only: minNights, maxNights, checkInTime, checkOutTime,
+  // cancellationPolicy and houseRules.
+  stayRules: {
+    type: DataTypes.JSON,
+    allowNull: true
+  },
   amenities: {
     type: DataTypes.JSON,
+    defaultValue: []
+  },
+  amenityDetails: {
+    type: DataTypes.JSON,
+    allowNull: false,
     defaultValue: []
   },
   description: {
@@ -192,7 +237,7 @@ Property.prototype.isPublic = function() {
 Property.prototype.hasValidBusinessModel = function() {
   const bookableCategories = ['hotel', 'lodge', 'servicedApartment', 'shortStayApartment'];
   const rentalCategories = ['house', 'room', 'sharedAccommodation'];
-
+  
   if (this.businessModel === 'bookable') {
     return bookableCategories.includes(this.category);
   } else {

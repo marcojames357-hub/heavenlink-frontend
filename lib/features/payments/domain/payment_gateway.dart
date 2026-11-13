@@ -253,14 +253,13 @@ class HttpPaymentService implements PaymentService {
       'POST',
       '/api/v1/payments/transactions',
       headers: {'idempotency-key': idempotencyKey},
-      body: {
-        'purpose': purpose.name,
-        'amountTzs': amountTzs,
-        'currency': BusinessConfig.currencyCode,
-        'methodId': methodId,
-        if (listingId != null) 'listingId': listingId,
-        if (bookingId != null) 'bookingId': bookingId,
-      },
+      body: _buildRequestBody(
+        purpose: purpose,
+        amountTzs: amountTzs,
+        methodId: methodId,
+        listingId: listingId,
+        bookingId: bookingId,
+      ),
     );
     if (response.statusCode == 402) throw const PaymentFailedException();
     if (response.statusCode >= 400) throw const PaymentNetworkException();
@@ -280,6 +279,24 @@ class HttpPaymentService implements PaymentService {
     return _fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
+  Map<String, Object?> _buildRequestBody({
+    required PaymentPurpose purpose,
+    required int amountTzs,
+    required String methodId,
+    String? listingId,
+    String? bookingId,
+  }) {
+    final body = <String, Object?>{
+      'purpose': purpose.name,
+      'amountTzs': amountTzs,
+      'currency': BusinessConfig.currencyCode,
+      'methodId': methodId,
+    };
+    if (listingId != null) body['listingId'] = listingId;
+    if (bookingId != null) body['bookingId'] = bookingId;
+    return body;
+  }
+
   Future<http.Response> _request(
     String method,
     String path, {
@@ -292,10 +309,10 @@ class HttpPaymentService implements PaymentService {
         ..followRedirects = method != 'POST';
       request.headers.addAll({'content-type': 'application/json', ...?headers});
       final token = _tokenProvider();
-      if (token != null && token.isNotEmpty) {
+      if (token?.isNotEmpty ?? false) {
         request.headers['authorization'] = 'Bearer $token';
       }
-      if (body != null) request.body = jsonEncode(body);
+      request.body = jsonEncode(body ?? const {});
       final streamed = await _client
           .send(request)
           .timeout(const Duration(seconds: 25));
